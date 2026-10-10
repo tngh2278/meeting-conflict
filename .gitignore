@@ -1,0 +1,23 @@
+# Node.js 패키지 및 빌드 결과
+node_modules/
+dist/
+
+# Java 빌드 결과
+target/
+build/
+.gradle/
+
+# 개인 설정 및 비밀정보
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# 개인 IDE 설정
+.idea/
+*.iml
+
+# 로그 및 운영체제 임시 파일
+*.log
+.DS_Store
+Thumbs.db
