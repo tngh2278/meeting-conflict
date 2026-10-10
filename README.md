@@ -10,6 +10,6 @@
 ## 예정 기술 스택
 
 - 프론트엔드: React, TypeScript
-- 백엔드: Java 21, Spring Boot
+- 백엔드: Java 25, Spring Boot
 - 데이터베이스: PostgreSQL
 - 로컬 실행 환경: Docker Compose
