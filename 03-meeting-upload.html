@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>로딩중 · 회의록 등록</title>
+
+  <link rel="stylesheet" as="style" crossorigin
+        href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+
+  <link rel="stylesheet" href="./common.css" />
+  <link rel="stylesheet" href="./page.css" />
+  <link rel="stylesheet" href="./modals.css" />
+</head>
+<body class="app">
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <a href="./00-landing.html" class="sidebar-logo">로딩중</a>
+        <p class="sidebar-tagline">회의의 결정을 잇다</p>
+      </div>
+      <div class="workspace-box" data-ws-toggle>
+        <p class="workspace-box-label">현재 팀</p>
+        <div class="workspace-box-value">
+          <span>서비스 기획팀</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+      </div>
+      <nav class="sidebar-nav" aria-label="메인 메뉴">
+        <ul>
+          <li><a href="./01-dashboard.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg><span>개요</span></a></li>
+          <li><a href="./02-meeting-list.html" class="active" aria-current="page"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg><span>회의록</span></a></li>
+          <li><a href="./06-decisions.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg><span>결정 사항</span></a></li>
+          <li><a href="./07-my-tasks.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><line x1="9" y1="12" x2="15" y2="12"></line><line x1="9" y1="16" x2="13" y2="16"></line></svg><span>내 업무</span></a></li>
+          <li><a href="./08-ai-chat.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"></path><path d="M19 14l.7 2.1L22 17l-2.3.9L19 20l-.7-2.1L16 17l2.3-.9z"></path></svg><span>AI 질문</span></a></li>
+          <li><a href="./09-team-management.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg><span>팀 관리</span></a></li>
+        </ul>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="avatar">장</div>
+        <div><div class="user-info-name">장준경</div><div class="user-info-role">일반 팀원</div></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div class="flex items-center gap-3">
+          <button class="mobile-menu-btn" id="menuBtn" aria-label="메뉴 열기">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+          </button>
+          <span class="topbar-breadcrumb">워크스페이스 / 서비스 기획팀</span>
+        </div>
+        <div class="topbar-actions">
+          <a href="#" class="topbar-icon-btn" aria-label="도움말">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+          </a>
+          <a href="./00-landing.html" class="topbar-logout">로그아웃</a>
+        </div>
+      </div>
+
+      <section class="page-header">
+        <div>
+          <h1 class="page-title">회의록 등록</h1>
+          <p class="page-subtitle">회의록 원본을 저장하고 AI 분석을 요청합니다.</p>
+        </div>
+        <a href="./02-meeting-list.html" class="btn btn-secondary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+          목록으로
+        </a>
+      </section>
+
+      <section class="page-content">
+        <div class="content-grid" style="grid-template-columns: 1fr 320px;">
+
+          <!-- 메인 폼 -->
+          <div class="section-card">
+            <div class="section-card-body">
+
+              <!-- 파일 업로드 드롭존 -->
+              <div class="form-group">
+                <label class="form-label">회의록 파일 <span class="required">*</span></label>
+                <div class="dropzone" data-dropzone>
+                  <div class="dropzone-icon">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                  </div>
+                  <p class="dropzone-title">여기에 파일을 끌어다 놓거나</p>
+                  <p class="dropzone-desc">클릭하여 파일을 선택하세요</p>
+                  <div class="dropzone-formats">
+                    <span class="badge badge-neutral">PDF</span>
+                    <span class="badge badge-neutral">TXT</span>
+                  </div>
+                  <input type="file" data-file-input accept=".pdf,.txt" style="display: none;" />
+                </div>
+                <p class="form-hint">지원 형식: PDF, TXT (최대 10MB) · 스캔 PDF는 텍스트 추출이 어려울 수 있습니다.</p>
+              </div>
+
+              <!-- 메타데이터 폼 -->
+              <div class="grid grid-cols-2" style="gap: var(--space-5);">
+                <div class="form-group">
+                  <label class="form-label" for="meeting-title">회의 제목 <span class="required">*</span></label>
+                  <input class="input" id="meeting-title" type="text" placeholder="예: 10월 13일 행사 준비 회의" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="meeting-date">회의 일시 <span class="required">*</span></label>
+                  <input class="input" id="meeting-date" type="datetime-local" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="meeting-location">회의 장소</label>
+                  <input class="input" id="meeting-location" type="text" placeholder="예: 회의실 A, 줌 미팅" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="meeting-writer">작성자 <span class="required">*</span></label>
+                  <input class="input" id="meeting-writer" type="text" value="장준경" readonly />
+                </div>
+                <div class="form-group" style="grid-column: span 2;">
+                  <label class="form-label" for="meeting-attendees">참석자</label>
+                  <input class="input" id="meeting-attendees" type="text" placeholder="쉼표로 구분하여 입력 (예: 송채은, 정수호, 장준경)" />
+                </div>
+                <div class="form-group" style="grid-column: span 2;">
+                  <label class="form-label" for="meeting-tags">태그</label>
+                  <input class="input" id="meeting-tags" type="text" placeholder="예: 행사 준비, 정례 회의" />
+                  <p class="form-hint">쉼표로 구분하여 여러 태그를 입력할 수 있습니다.</p>
+                </div>
+                <div class="form-group" style="grid-column: span 2;">
+                  <label class="form-label" for="meeting-memo">회의 메모 (선택)</label>
+                  <textarea class="textarea" id="meeting-memo" placeholder="회의의 배경이나 특이사항을 입력하세요."></textarea>
+                </div>
+              </div>
+
+              <!-- 하단 액션 -->
+              <hr class="divider" />
+              <div class="flex justify-between items-center">
+                <p class="text-sm text-gray">업로드 후 자동으로 AI 분석이 시작됩니다.</p>
+                <div class="flex gap-3">
+                  <a href="./02-meeting-list.html" class="btn btn-secondary">취소</a>
+                  <button class="btn btn-primary" data-modal-open="modal-no-file">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>
+                    업로드 및 분석
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 우측 안내 패널 -->
+          <div class="flex flex-col gap-4">
+            <div class="card card-bordered card-sm">
+              <h3 class="text-h3 mb-4 flex items-center gap-2">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary-700);"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+                업로드 안내
+              </h3>
+              <ul style="display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--fs-sm); color: var(--color-gray-600); line-height: 1.5;">
+                <li>• 텍스트 추출이 가능한 PDF, TXT만 지원</li>
+                <li>• 스캔 PDF, 이미지, 한글(hwp) 파일은 분석 불가</li>
+                <li>• 최대 용량: 10MB</li>
+                <li>• 동일 파일 재업로드 시 자동 감지 (SHA-256)</li>
+              </ul>
+            </div>
+
+            <div class="card card-bordered card-sm" style="background: var(--color-primary-50); border-color: var(--color-primary-200);">
+              <h3 class="text-h3 mb-4 flex items-center gap-2" style="color: var(--color-primary-700);">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+                처리 흐름
+              </h3>
+              <ol style="display: flex; flex-direction: column; gap: var(--space-3); font-size: var(--fs-sm); color: var(--color-gray-700);">
+                <li class="flex items-center gap-2"><span class="badge badge-primary">1</span> 파일 업로드 및 메타데이터 저장</li>
+                <li class="flex items-center gap-2"><span class="badge badge-primary">2</span> 텍스트 추출 및 청크 분할</li>
+                <li class="flex items-center gap-2"><span class="badge badge-primary">3</span> AI 결정·담당자·마감일 추출</li>
+                <li class="flex items-center gap-2"><span class="badge badge-primary">4</span> 과거 결정과 충돌·중복 비교</li>
+                <li class="flex items-center gap-2"><span class="badge badge-primary">5</span> 추출 결과 검토 대기</li>
+              </ol>
+            </div>
+          </div>
+
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ============= Modals ============= -->
+
+  <!-- 파일 미선택 안내 -->
+  <div class="modal-overlay" id="modal-no-file" data-modal>
+    <div class="modal modal-sm confirm-modal" role="dialog" aria-modal="true">
+      <div class="modal-body">
+        <div class="modal-icon warning">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+        </div>
+        <h3 class="modal-title">회의록 파일을 먼저 선택하세요</h3>
+        <p class="modal-desc">업로드할 회의록 파일을 선택한 후 다시 시도해주세요.</p>
+      </div>
+      <div class="modal-footer center">
+        <button class="btn btn-primary" data-modal-close>확인</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
