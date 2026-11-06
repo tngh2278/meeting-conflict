@@ -4,6 +4,7 @@ import "./App.css";
 import "./workspace.css";
 import Modal from "./components/Modal";
 import UploadPage from "./UploadPage";
+import ServerConnectionStatus from "./components/ServerConnectionSatuts";
 import {
   demoUsers,
   exampleCandidates,
@@ -745,6 +746,7 @@ export default function App() {
               </div>
             </section>
           </main>
+          <ServerConnectionStatus />
           <footer className="landing-footer">
             <p>회의록 · 결정 사항 · 회의 사진을 하나의 기록으로</p>
             <span>로딩중 · 캡스톤 디자인</span>
