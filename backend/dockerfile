@@ -1,0 +1,17 @@
+# Java 25 환경에서 실행 파일 만들기
+FROM eclipse-temurin:25-jdk-jammy AS build
+WORKDIR /app
+
+COPY . .
+
+RUN sed -i 's/\r$//' mvnw \
+    && chmod +x mvnw \
+    && ./mvnw -B -DskipTests package
+
+# 실행에 필요한 파일만 최종 이미지에 포함
+FROM eclipse-temurin:25-jre-jammy
+WORKDIR /app
+
+COPY --from=build /app/target/*.jar app.jar
+
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=60.0", "-jar", "app.jar"]
