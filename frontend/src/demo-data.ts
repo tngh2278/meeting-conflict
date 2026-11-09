@@ -1,3 +1,5 @@
+import type { ExtractedDocument } from "./document-api";
+
 // 화면 시연용 데이터입니다. 실제 계정·회의·인물 분석 결과가 아닙니다.
 export type Role = "admin" | "member";
 export type Page =
@@ -60,6 +62,7 @@ export type Meeting = {
   format: "PDF" | "TXT";
   tags: string;
   paragraphs: string[];
+  extractedDocument?: ExtractedDocument;
   status: "ready" | "analyzing" | "failed" | "review" | "submitted" | "done";
   example: boolean;
   candidates: Candidate[];
@@ -105,7 +108,7 @@ export type UploadDraft = {
   location: string;
   tags: string;
   example: boolean;
-  text: string;
+  extractedDocument?: ExtractedDocument;
   photos: File[];
   photoConsent: boolean;
 };

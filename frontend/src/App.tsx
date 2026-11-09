@@ -272,7 +272,10 @@ export default function App() {
       tags: draft.tags,
       paragraphs: draft.example
         ? newParagraphs
-        : draft.text.split(/\n\s*\n/).filter(Boolean),
+        : draft.extractedDocument?.pages.flatMap((page) =>
+            page.paragraphs.map((paragraph) => paragraph.text),
+          ) ?? [],
+      extractedDocument: draft.extractedDocument,
       status: draft.example ? "analyzing" : "ready",
       example: draft.example,
       candidates,
@@ -283,7 +286,7 @@ export default function App() {
     setToast(
       draft.example
         ? "예시 분석 흐름을 시작했습니다."
-        : "선택한 파일을 시연 화면에 등록했습니다. 서버 저장·실제 분석은 연결 전입니다.",
+        : "텍스트 추출이 완료되었습니다. 원문 탭에서 페이지·문단별 내용을 확인하세요.",
     );
   }
   function submitReview(meeting: Meeting) {
@@ -454,9 +457,9 @@ export default function App() {
         <Modal title="로딩중 이용 안내" wide onClose={() => setDialog(null)}>
           <div className="stack">
             <p className="notice-message">
-              현재 버전은 화면·이동·입력 검증·예시 상태 변경을 확인하는
-              프론트엔드 시연입니다. 서버 인증·DB 저장·AI 분석은 아직 연결되지
-              않았습니다.
+              직접 선택한 PDF·TXT는 서버에서 텍스트를 추출합니다. 계정·결정
+              처리 화면은 예시 데이터로 동작하며, 서버 인증·DB 저장·AI 분석은
+              아직 연결되지 않았습니다.
             </p>
             <ol className="help-steps">
               <li>
@@ -1004,8 +1007,7 @@ export default function App() {
               />
             )}
             <footer className="workspace-footer">
-              예시 데이터 기반 화면 시연 · 새로고침 시 초기화 · 실제
-              인증·분석·저장은 연결 전
+              PDF·TXT 텍스트 추출 연결 · 새로고침 시 초기화 · 서버 인증·AI 분석·영구 저장은 준비 중
             </footer>
           </main>
         </div>
