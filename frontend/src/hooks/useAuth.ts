@@ -103,24 +103,20 @@ export function useAuth(): UseAuthResult {
   }, [fetchProfile]);
 
   // 회원가입
-  // Supabase가 auth.users에 레코드를 만들고,
-  // 아까 만든 트리거(on_auth_user_created)가 public.users에도 자동으로 레코드를 만듭니다.
-  // → name은 일단 auth.users의 email 앞부분이 들어가고,
-  //   실제 입력한 name으로 덮어쓰려면 가입 직후 public.users를 UPDATE합니다.
   const signUp = useCallback(
     async (email: string, password: string, name: string): Promise<{ error: string | null }> => {
       try {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
+          options: {
+            data: { name }, 
+          },
         });
 
         if (error) return { error: translateAuthError(error.message) };
         if (!data.user) return { error: "회원가입에 실패했습니다. 다시 시도해 주세요." };
 
-        // 방금 만든 public.users 레코드의 name을 사용자가 입력한 이름으로 덮어씁니다.
-        // RLS 정책(users_update_self)이 본인 수정만 허용하므로 자동으로 안전합니다.
-        // 단, 이 단계가 실패하더라도 회원가입 자체는 성공한 상태입니다.
         if (data.session) {
           // 이메일 인증 없이 바로 세션이 생긴 경우 (Supabase 기본 설정)
           await supabase
