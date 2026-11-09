@@ -4,7 +4,10 @@ import "./App.css";
 import "./workspace.css";
 import Modal from "./components/Modal";
 import UploadPage from "./UploadPage";
-import ServerConnectionStatus from "./components/ServerConnectionSatuts";
+// import ServerConnectionStatus from "./components/ServerConnectionStatus";
+import AuthDialog from "./components/AuthDialog";
+import { useAuth } from "./hooks/useAuth";
+import type { AuthUser } from "./hooks/useAuth";
 import {
   demoUsers,
   exampleCandidates,
@@ -89,7 +92,22 @@ function readRoute() {
 }
 
 export default function App() {
-  const [user, setUser] = useState<Member | null>(null);
+  // === Supabase 인증 + 데모 사용자 하이브리드 ===
+  // useAuth: Supabase 세션 관리 (실제 로그인)
+  const { user: authUser, loading, signIn, signUp, signOut } = useAuth();
+  // demoUser: 시연용 데모 계정 (Supabase 없이도 동작)
+  const [demoUser, setDemoUser] = useState<Member | null>(null);
+
+  // AuthUser -> Member 타입 매핑 (Supabase 사용자를 Member로 변환)
+  const memberFromAuth = (auth: AuthUser): Member => ({
+    id: auth.id,
+    name: auth.name,
+    email: auth.email,
+    role: auth.role,
+  });
+
+  // 최종 user: Supabase 로그인이 우선, 없으면 데모 사용자
+  const user: Member | null = authUser ? memberFromAuth(authUser) : demoUser;
   const [teams, setTeams] = useState<Team[]>(initialTeams);
   const [teamId, setTeamId] = useState("service");
   const [meetings, setMeetings] = useState<Meeting[]>(initialMeetings);
@@ -205,7 +223,8 @@ export default function App() {
     ]);
   }
   function login(account: Member) {
-    setUser(account);
+    // 데모 로그인: Supabase 호출 없이 demoUser만 설정
+    setDemoUser(account);
     setTeamId(
       teams.find((team) =>
         team.members.some((member) => member.id === account.id),
@@ -447,7 +466,8 @@ export default function App() {
           mode={dialog}
           onClose={() => setDialog(null)}
           onMode={setDialog}
-          onLogin={login}
+          onSignUp={signUp}
+          onSignIn={signIn}
         />
       )}
       {dialog === "help" && (
@@ -518,8 +538,9 @@ export default function App() {
               </button>
               <button
                 className="button button-primary"
-                onClick={() => {
-                  setUser(null);
+                onClick={async () => {
+                  await signOut();
+                  setDemoUser(null);
                   setSource(null);
                   setDialog(null);
                 }}
@@ -640,6 +661,29 @@ export default function App() {
     </>
   );
 
+  if (loading) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexDirection: "column",
+          gap: "1rem",
+          background: "#f5f5f7",
+        }}
+      >
+        <div style={{ fontSize: "1.25rem", fontWeight: 600 }}>
+          로그인 정보를 불러오는 중...
+        </div>
+        <div className="small muted">
+          Supabase 세션을 확인하고 있어요. 잠시만 기다려주세요.
+        </div>
+      </div>
+    );
+  }
+
   if (!user)
     return (
       <>
@@ -696,6 +740,26 @@ export default function App() {
                   사용 흐름 보기
                 </button>
               </div>
+              <div className="demo-quick-accounts" style={{ marginTop: "1.5rem" }}>
+                <p className="small muted" style={{ marginBottom: "0.5rem" }}>
+                  시연용 계정으로 바로 입장 (Supabase 인증 없이)
+                </p>
+                <div
+                  className="row-actions"
+                  style={{ flexWrap: "wrap", gap: "0.5rem" }}
+                >
+                  {demoUsers.map((account) => (
+                    <button
+                      key={account.id}
+                      className="button button-secondary"
+                      onClick={() => login(account)}
+                    >
+                      {account.name} (
+                      {account.role === "admin" ? "관리자" : "팀원"})
+                    </button>
+                  ))}
+                </div>
+              </div>
               <p className="landing-demo-note">
                 화면 시연 버전 · 예시 데이터 사용
               </p>
@@ -745,8 +809,7 @@ export default function App() {
                 <span>후속 업무</span>
               </div>
             </section>
-          </main>
-          <ServerConnectionStatus />
+          </main> 
           <footer className="landing-footer">
             <p>회의록 · 결정 사항 · 회의 사진을 하나의 기록으로</p>
             <span>로딩중 · 캡스톤 디자인</span>
@@ -1023,155 +1086,6 @@ export default function App() {
   );
 }
 
-function AuthDialog({
-  mode,
-  onMode,
-  onClose,
-  onLogin,
-}: {
-  mode: "login" | "signup";
-  onMode: (mode: DialogName) => void;
-  onClose: () => void;
-  onLogin: (user: Member) => void;
-}) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [repeat, setRepeat] = useState("");
-  const [message, setMessage] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    if (mode === "signup") {
-      if (password !== repeat) {
-        setMessage("비밀번호가 일치하지 않습니다.");
-        return;
-      }
-      setMessage(
-        "가입 정보 입력 확인이 완료되었습니다. 실제 계정 생성은 서버 연동 후 제공됩니다. 아래 시연 계정으로 화면을 확인해 주세요.",
-      );
-      return;
-    }
-    const account = demoUsers.find((item) => item.email === email.trim());
-    if (!account || password !== "demo1234") {
-      setMessage(
-        "화면 시연 계정의 비밀번호는 demo1234입니다. 아래 역할별 버튼으로도 시작할 수 있습니다.",
-      );
-      return;
-    }
-    onLogin(account);
-  }
-  return (
-    <Modal
-      key={mode}
-      title={mode === "login" ? "로그인" : "회원가입"}
-      onClose={onClose}
-    >
-      <div className="stack">
-        <p className="muted">회의의 기록을 팀의 다음 결정으로 연결하세요.</p>
-        <form className="stack" onSubmit={submit}>
-          {mode === "signup" && (
-            <label className="field">
-              <span>이름</span>
-              <input autoComplete="name" placeholder="이름" required />
-            </label>
-          )}
-          <label className="field">
-            <span>이메일</span>
-            <input
-              type="email"
-              autoComplete="email"
-              placeholder="name@example.com"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-            />
-          </label>
-          <label className="field">
-            <span>비밀번호</span>
-            <div className="password-field">
-              <input
-                type={showPassword ? "text" : "password"}
-                autoComplete={
-                  mode === "login" ? "current-password" : "new-password"
-                }
-                aria-label="비밀번호"
-                minLength={8}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-              />
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => setShowPassword((value) => !value)}
-              >
-                {showPassword ? "숨김" : "보기"}
-              </button>
-            </div>
-          </label>
-          {mode === "signup" && (
-            <label className="field">
-              <span>비밀번호 확인</span>
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={repeat}
-                onChange={(event) => setRepeat(event.target.value)}
-                required
-              />
-            </label>
-          )}
-          {message && (
-            <p className="notice-message" role="status">
-              {message}
-            </p>
-          )}
-          <button className="button button-primary">
-            {mode === "login" ? "로그인" : "가입 정보 확인"}
-          </button>
-        </form>
-        <button
-          className="text-button"
-          onClick={() => {
-            onMode(mode === "login" ? "signup" : "login");
-            setMessage("");
-          }}
-        >
-          {mode === "login"
-            ? "계정이 없으신가요? 회원가입"
-            : "이미 계정이 있나요? 로그인"}
-        </button>
-        <div className="demo-accounts">
-          <p className="small muted">역할별 화면 시연 · 실제 인증 아님</p>
-          {demoUsers.map((account) => (
-            <button
-              className="demo-account"
-              key={account.id}
-              onClick={() => onLogin(account)}
-            >
-              <span className="avatar small-avatar">
-                {account.name.slice(-2)}
-              </span>
-              <div>
-                <strong>
-                  {account.name}
-                  {account.id === "suho" ? "로" : "으로"} 시작
-                </strong>
-                <p className="small muted">
-                  {account.role === "admin"
-                    ? "관리자 · 결정 처리·팀 관리"
-                    : "일반 팀원 · 등록·검수·조회"}
-                </p>
-              </div>
-              <span aria-hidden="true">→</span>
-            </button>
-          ))}
-          <p className="small muted">이메일 로그인 시 비밀번호: demo1234</p>
-        </div>
-      </div>
-    </Modal>
-  );
-}
 
 function ResolveDialog({
   candidate,
