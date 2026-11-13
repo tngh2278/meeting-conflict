@@ -1,4 +1,11 @@
-// 화면 시연용 데이터입니다. 실제 계정·회의·인물 분석 결과가 아닙니다.
+// ============================================================================
+// 타입 정의 + 회의록/결정/업무 데모 데이터
+// ============================================================================
+// 팀·팀원 관련 더미 데이터는 제거되었습니다 (Supabase로 대체).
+// 아래 데모 데이터(meetings/decisions/tasks)는 회의록 기능이 Supabase로
+// 옮겨지기 전까지 로컬 시연용으로만 사용됩니다.
+// ============================================================================
+
 export type Role = "admin" | "member";
 export type Page =
   | "overview"
@@ -138,34 +145,10 @@ export const statusLabels: Record<Meeting["status"], string> = {
   submitted: "관리자 확인 대기",
   done: "처리 완료",
 };
-export const demoUsers: Member[] = [
-  {
-    id: "junkyeong",
-    name: "장준경",
-    email: "junkyeong@example.com",
-    role: "member",
-  },
-  { id: "suho", name: "정수호", email: "suho@example.com", role: "admin" },
-];
-export const initialTeams: Team[] = [
-  {
-    id: "service",
-    name: "서비스 기획팀",
-    members: [
-      ...demoUsers,
-      {
-        id: "chaeeun",
-        name: "송채은",
-        email: "chaeeun@example.com",
-        role: "member",
-      },
-    ],
-  },
-];
-export const registeredUsers: Member[] = [
-  ...initialTeams[0].members,
-  { id: "haneul", name: "김하늘", email: "haneul@example.com", role: "member" },
-];
+
+// ---------------------------------------------------------------------------
+// 회의록 시연용 단락 (예시 데이터 — Supabase meetings 테이블 연동 전까지 사용)
+// ---------------------------------------------------------------------------
 export const oldParagraphs = [
   "행사 준비 기준 회의 · 2026년 10월 6일\n참석자: 송채은, 장준경, 정수호",
   "행사 준비 자료는 2026년 10월 15일 18:00까지 제출하기로 확정한다. 송채은이 자료를 취합하고, 장준경은 안내문 초안을 작성한다.",
@@ -242,6 +225,14 @@ export function examplePhoto(): MeetingPhoto {
     ],
   };
 }
+
+// ---------------------------------------------------------------------------
+// 회의록/결정/업무 초기 데모 데이터
+// ---------------------------------------------------------------------------
+// 주의: teamId가 "service"로 하드코딩되어 있습니다.
+// 이 데이터는 회의록 기능이 Supabase로 옮겨지기 전까지 임시로 표시되며,
+// 새로 만든 팀에서는 회의록이 비어 있게 됩니다.
+// ---------------------------------------------------------------------------
 export const initialMeetings: Meeting[] = [
   {
     id: "meeting-new",

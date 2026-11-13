@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { daysLeft, registeredUsers, resolutionLabels } from "./demo-data";
+import { daysLeft, resolutionLabels } from "./demo-data";
 import type {
   Candidate,
   ChangeRecord,
@@ -14,6 +14,7 @@ import type {
 } from "./demo-data";
 import { EmptyState, Heading, SourceButton } from "./MeetingPages";
 import Modal from "./components/Modal";
+import { searchUserByEmail, type UserSearchResult } from "./lib/teams";
 
 export function DecisionsPage({
   meetings,
@@ -471,10 +472,40 @@ export function TeamPage({
 }) {
   const [adding, setAdding] = useState(false);
   const [email, setEmail] = useState("");
-  const [searched, setSearched] = useState(false);
-  const result = registeredUsers.find(
-    (user) => user.email.toLowerCase() === email.trim().toLowerCase(),
-  );
+  const [searching, setSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [result, setResult] = useState<UserSearchResult | null>(null);
+
+  async function handleSearch(event: React.FormEvent) {
+    event.preventDefault();
+    if (!email.trim()) return;
+    setSearching(true);
+    setSearchError(null);
+    setHasSearched(false);
+    try {
+      const found = await searchUserByEmail(email);
+      setResult(found);
+      setHasSearched(true);
+    } catch (err: unknown) {
+      setSearchError(
+        err instanceof Error ? err.message : "검색 중 오류가 발생했습니다.",
+      );
+      setResult(null);
+      setHasSearched(true);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function closeAdding() {
+    setAdding(false);
+    setEmail("");
+    setResult(null);
+    setSearchError(null);
+    setHasSearched(false);
+  }
+
   return (
     <>
       <Heading
@@ -509,7 +540,7 @@ export function TeamPage({
             <thead>
               <tr>
                 <th>팀원</th>
-                <th>가입 이메일</th>
+                <th>사용자 ID</th>
                 <th>역할</th>
               </tr>
             </thead>
@@ -525,7 +556,11 @@ export function TeamPage({
                       <span className="small muted"> · 나</span>
                     )}
                   </td>
-                  <td>{member.email}</td>
+                  <td>
+                    <code className="small muted">
+                      {member.id.slice(0, 8)}…
+                    </code>
+                  </td>
                   <td>
                     {role === "admin" ? (
                       <select
@@ -569,21 +604,13 @@ export function TeamPage({
         </div>
       </section>
       {adding && (
-        <Modal title="팀원 추가" onClose={() => setAdding(false)}>
+        <Modal title="팀원 추가" onClose={closeAdding}>
           <div className="stack">
             <p className="muted">
-              서비스에 가입된 사용자를 이메일로 검색합니다.
+              서비스에 가입된 사용자를 이메일로 검색합니다. 검색한 사용자에게
+              미리 안내하여 가입되어 있는지 확인해 주세요.
             </p>
-            <p className="small muted">
-              검색 시연: haneul@example.com · 가상 사용자
-            </p>
-            <form
-              className="row-actions"
-              onSubmit={(event) => {
-                event.preventDefault();
-                setSearched(true);
-              }}
-            >
+            <form className="row-actions" onSubmit={handleSearch}>
               <input
                 type="email"
                 required
@@ -592,35 +619,56 @@ export function TeamPage({
                 value={email}
                 onChange={(event) => {
                   setEmail(event.target.value);
-                  setSearched(false);
+                  setResult(null);
+                  setSearchError(null);
                 }}
               />
-              <button className="button button-secondary">검색</button>
+              <button
+                className="button button-secondary"
+                disabled={searching || !email.trim()}
+              >
+                {searching ? "검색 중…" : "검색"}
+              </button>
             </form>
-            {searched &&
-              (result ? (
-                <div className="subtle-panel stack">
-                  <strong>{result.name}</strong>
-                  <p>{result.email}</p>
-                  {team.members.some((member) => member.id === result.id) ? (
-                    <p className="muted">이미 이 팀에 소속된 사용자입니다.</p>
-                  ) : (
-                    <button
-                      className="button button-primary"
-                      onClick={() => {
-                        onAdd({ ...result, role: "member" });
-                        setAdding(false);
-                      }}
-                    >
-                      일반 팀원으로 추가
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <p className="error-message" role="status">
-                  가입자를 찾지 못했습니다. 시연용 이메일을 확인해 주세요.
-                </p>
-              ))}
+            {searchError && (
+              <p className="error-message" role="status">
+                검색 실패: {searchError}
+              </p>
+            )}
+            {!hasSearched && email.trim() && !searching && (
+              <p className="small muted">
+                검색 버튼을 눌러 가입자를 찾습니다.
+              </p>
+            )}
+            {result && (
+              <div className="subtle-panel stack">
+                <strong>{result.name}</strong>
+                <p className="small muted">{result.email}</p>
+                {team.members.some((member) => member.id === result.id) ? (
+                  <p className="muted">이미 이 팀에 소속된 사용자입니다.</p>
+                ) : (
+                  <button
+                    className="button button-primary"
+                    onClick={() => {
+                      onAdd({
+                        id: result.id,
+                        name: result.name,
+                        email: result.email,
+                        role: "member",
+                      });
+                      closeAdding();
+                    }}
+                  >
+                    일반 팀원으로 추가
+                  </button>
+                )}
+              </div>
+            )}
+            {hasSearched && !result && !searchError && (
+              <p className="small muted">
+                가입자를 찾지 못했습니다. 이메일을 확인해 주세요.
+              </p>
+            )}
           </div>
         </Modal>
       )}
