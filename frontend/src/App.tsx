@@ -17,11 +17,17 @@ import {
   resolutionLabels,
 } from "./demo-data";
 import {
-  addMember,
+  acceptInvitation,
   changeMemberRole as changeMemberRoleRemote,
   createTeam as createTeamRemote,
+  declineInvitation,
+  fetchMyPendingInvitations,
   fetchMyTeams,
+  inviteMember,
+  leaveTeam as leaveTeamRemote,
+  removeMember as removeMemberRemote,
 } from "./lib/teams";
+import type { PendingInvitation } from "./lib/teams";
 import type {
   Candidate,
   ChangeRecord,
@@ -70,6 +76,7 @@ type DialogName =
   | "teams"
   | "newteam"
   | "notifications"
+  | "invitations"
   | "resolve"
   | null;
 function readRoute() {
@@ -116,6 +123,10 @@ export default function App() {
   const [teamId, setTeamId] = useState<string | null>(null);
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [teamsError, setTeamsError] = useState<string | null>(null);
+  const [pendingInvitations, setPendingInvitations] = useState<
+    PendingInvitation[]
+  >([]);
+  const [invitationsLoading, setInvitationsLoading] = useState(false);
   const [meetings, setMeetings] = useState<Meeting[]>(initialMeetings);
   const [decisions, setDecisions] = useState<Decision[]>(initialDecisions);
   const [history, setHistory] = useState<ChangeRecord[]>([]);
@@ -135,12 +146,13 @@ export default function App() {
   const [teamName, setTeamName] = useState("");
   const urls = useRef<string[]>([]);
 
-  // 로그인된 사용자가 바뀔 때마다 내 팀 목록을 Supabase에서 불러옵니다.
+  // 로그인된 사용자가 바뀔 때마다 내 팀 목록과 받은 초대를 Supabase에서 불러옵니다.
   useEffect(() => {
     if (!authUser) {
       setTeams([]);
       setTeamId(null);
       setNotifications([]);
+      setPendingInvitations([]);
       return;
     }
     let cancelled = false;
@@ -166,10 +178,34 @@ export default function App() {
       .finally(() => {
         if (!cancelled) setTeamsLoading(false);
       });
+    // 받은 초대(PENDING) 목록도 함께 로드
+    setInvitationsLoading(true);
+    fetchMyPendingInvitations(authUser.id)
+      .then((items) => {
+        if (!cancelled) setPendingInvitations(items);
+      })
+      .catch(() => {
+        if (!cancelled) setPendingInvitations([]);
+      })
+      .finally(() => {
+        if (!cancelled) setInvitationsLoading(false);
+      });
     return () => {
       cancelled = true;
     };
   }, [authUser]);
+
+  // 팀·초대 목록을 서버에서 다시 불러옵니다. (초대/수락/거절/제거/탈퇴 후 호출)
+  async function refreshTeamsAndInvitations() {
+    if (!authUser) return;
+    const [teamsResult, invitationsResult] = await Promise.all([
+      fetchMyTeams(),
+      fetchMyPendingInvitations(authUser.id),
+    ]);
+    setTeams(teamsResult);
+    setPendingInvitations(invitationsResult);
+    return teamsResult;
+  }
 
   const emptyTeam: Team = { id: "", name: "", members: [] };
   const activeTeam =
@@ -693,6 +729,71 @@ export default function App() {
           </div>
         </Modal>
       )}
+      {dialog === "invitations" && (
+        <Modal title="받은 팀 초대" onClose={() => setDialog(null)}>
+          <div className="stack">
+            {invitationsLoading && (
+              <p className="muted">초대를 불러오는 중…</p>
+            )}
+            {!invitationsLoading && pendingInvitations.length === 0 && (
+              <p className="muted">받은 초대가 없습니다.</p>
+            )}
+            {pendingInvitations.map((invitation) => (
+              <div className="list-row" key={invitation.teamId}>
+                <div>
+                  <strong>{invitation.teamName}</strong>
+                  <p className="small muted">
+                    {invitation.role === "admin" ? "관리자" : "일반 팀원"} 초대
+                  </p>
+                </div>
+                <div className="row-actions">
+                  <InvitationActionButton
+                    teamId={invitation.teamId}
+                    kind="accept"
+                    onDone={async () => {
+                      try {
+                        await acceptInvitation(invitation.teamId);
+                        const refreshed = await refreshTeamsAndInvitations();
+                        // 수락한 팀이 결과에 있으면 해당 팀으로 이동
+                        if (
+                          refreshed &&
+                          refreshed.some((t) => t.id === invitation.teamId)
+                        ) {
+                          setTeamId(invitation.teamId);
+                        }
+                        setToast(`${invitation.teamName} 팀에 참여했습니다.`);
+                      } catch (err: unknown) {
+                        setToast(
+                          err instanceof Error
+                            ? `수락 실패: ${err.message}`
+                            : "수락에 실패했습니다.",
+                        );
+                      }
+                    }}
+                  />
+                  <InvitationActionButton
+                    teamId={invitation.teamId}
+                    kind="decline"
+                    onDone={async () => {
+                      try {
+                        await declineInvitation(invitation.teamId);
+                        await refreshTeamsAndInvitations();
+                        setToast("초대를 거절했습니다.");
+                      } catch (err: unknown) {
+                        setToast(
+                          err instanceof Error
+                            ? `거절 실패: ${err.message}`
+                            : "거절에 실패했습니다.",
+                        );
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Modal>
+      )}
       {dialog === "resolve" && targetMeeting && targetCandidate && (
         <ResolveDialog
           key={targetCandidate.id}
@@ -884,6 +985,15 @@ export default function App() {
               <div className="topbar-actions">
                 <button
                   className="text-button"
+                  onClick={() => setDialog("invitations")}
+                >
+                  초대
+                  {pendingInvitations.length > 0 && (
+                    <span className="nav-count">{pendingInvitations.length}</span>
+                  )}
+                </button>
+                <button
+                  className="text-button"
                   onClick={() => setDialog("logout")}
                 >
                   로그아웃
@@ -897,6 +1007,20 @@ export default function App() {
                   새 팀을 만들어 회의록·결정·업무를 관리하거나, 다른 팀의
                   관리자가 회원님을 초대할 때까지 기다릴 수 있습니다.
                 </p>
+                {pendingInvitations.length > 0 && (
+                  <div className="subtle-panel row-between">
+                    <p>
+                      <strong>받은 초대 {pendingInvitations.length}건</strong>이
+                      있습니다. 상단 “초대” 버튼을 눌러 수락하세요.
+                    </p>
+                    <button
+                      className="button button-primary"
+                      onClick={() => setDialog("invitations")}
+                    >
+                      초대 확인
+                    </button>
+                  </div>
+                )}
                 {teamsError && (
                   <p className="error-message" role="alert">
                     팀 목록 불러오기 실패: {teamsError}
@@ -913,13 +1037,11 @@ export default function App() {
                     className="button button-secondary"
                     onClick={() =>
                       authUser &&
-                      fetchMyTeams()
-                        .then(setTeams)
-                        .catch((e: unknown) =>
-                          setTeamsError(
-                            e instanceof Error ? e.message : String(e),
-                          ),
-                        )
+                      refreshTeamsAndInvitations().catch((e: unknown) =>
+                        setTeamsError(
+                          e instanceof Error ? e.message : String(e),
+                        ),
+                      )
                     }
                   >
                     새로고침
@@ -993,6 +1115,15 @@ export default function App() {
               {teamsLoading && (
                 <span className="small muted">팀 동기화 중…</span>
               )}
+              <button
+                className="text-button"
+                onClick={() => setDialog("invitations")}
+              >
+                초대
+                {pendingInvitations.length > 0 && (
+                  <span className="nav-count">{pendingInvitations.length}</span>
+                )}
+              </button>
               <button
                 className="text-button"
                 onClick={() => setDialog("notifications")}
@@ -1146,25 +1277,90 @@ export default function App() {
                     activeTeam.members.some((item) => item.id === member.id)
                   )
                     return;
-                  // 낙관적 업데이트
+                  // 낙관적 업데이트: pendingMembers 에 즉시 추가
                   setTeams((items) =>
                     items.map((team) =>
                       team.id === activeTeam.id
-                        ? { ...team, members: [...team.members, member] }
+                        ? {
+                            ...team,
+                            pendingMembers: [
+                              ...(team.pendingMembers ?? []),
+                              member,
+                            ],
+                          }
                         : team,
                     ),
                   );
                   try {
-                    await addMember(activeTeam.id, member.id, member.role);
-                    recordNotice(`${member.name}님을 팀에 추가했습니다.`);
+                    await inviteMember(activeTeam.id, member.id, member.role);
+                    // 서버 상태 동기화 (초대 알림은 받는 사람에게만 보이므로 여기선 팀 목록만)
+                    const refreshed = await fetchMyTeams().catch(() => teams);
+                    setTeams(refreshed);
+                    setToast(`${member.name}님에게 초대를 보냈습니다. 상대방이 수락하면 정식 팀원이 됩니다.`);
                   } catch (err: unknown) {
                     // 실패 시 원래 상태로 되돌림
                     const refreshed = await fetchMyTeams().catch(() => teams);
                     setTeams(refreshed);
                     setToast(
                       err instanceof Error
-                        ? `팀원 추가 실패: ${err.message}`
-                        : "팀원 추가에 실패했습니다.",
+                        ? `초대 실패: ${err.message}`
+                        : "초대에 실패했습니다.",
+                    );
+                  }
+                }}
+                onRemove={async (memberId) => {
+                  if (role !== "admin" || !hasTeam) return;
+                  const target = activeTeam.members.find(
+                    (member) => member.id === memberId,
+                  );
+                  // 낙관적 업데이트
+                  setTeams((items) =>
+                    items.map((team) =>
+                      team.id === activeTeam.id
+                        ? {
+                            ...team,
+                            members: team.members.filter(
+                              (member) => member.id !== memberId,
+                            ),
+                          }
+                        : team,
+                    ),
+                  );
+                  try {
+                    await removeMemberRemote(activeTeam.id, memberId);
+                    recordNotice(`${target?.name ?? "팀원"}님을 팀에서 제거했습니다.`);
+                  } catch (err: unknown) {
+                    const refreshed = await fetchMyTeams().catch(() => teams);
+                    setTeams(refreshed);
+                    setToast(
+                      err instanceof Error
+                        ? `제거 실패: ${err.message}`
+                        : "제거에 실패했습니다.",
+                    );
+                  }
+                }}
+                onLeave={async () => {
+                  if (!hasTeam) return;
+                  const leavingTeam = activeTeam;
+                  try {
+                    await leaveTeamRemote(leavingTeam.id);
+                    const refreshed = await refreshTeamsAndInvitations();
+                    // 나간 팀이 활성 팀이었으면 다른 팀으로 전환
+                    setTeamId((prev) => {
+                      if (prev !== leavingTeam.id) return prev;
+                      return refreshed && refreshed.length > 0
+                        ? refreshed[0].id
+                        : null;
+                    });
+                    setToast(`${leavingTeam.name} 팀에서 나갔습니다.`);
+                    if (!refreshed || refreshed.length === 0) {
+                      go("overview");
+                    }
+                  } catch (err: unknown) {
+                    setToast(
+                      err instanceof Error
+                        ? `탈퇴 실패: ${err.message}`
+                        : "탈퇴에 실패했습니다.",
                     );
                   }
                 }}
@@ -1362,5 +1558,35 @@ function ResolveDialog({
         )}
       </form>
     </Modal>
+  );
+}
+
+// 초대 수락/거절 버튼 — 클릭 시 로딩 상태 표시 후 onDone 호출
+function InvitationActionButton({
+  kind,
+  onDone,
+}: {
+  teamId: string;
+  kind: "accept" | "decline";
+  onDone: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className={
+        kind === "accept" ? "button button-primary" : "button button-secondary"
+      }
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await onDone();
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? "처리 중…" : kind === "accept" ? "수락" : "거절"}
+    </button>
   );
 }

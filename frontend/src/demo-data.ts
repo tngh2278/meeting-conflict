@@ -73,7 +73,14 @@ export type Meeting = {
   photos: MeetingPhoto[];
 };
 export type Member = { id: string; name: string; email: string; role: Role };
-export type Team = { id: string; name: string; members: Member[] };
+// pendingMembers: 초대를 보냈지만 아직 수락 전(PENDING)인 사용자.
+// Supabase 실제 데이터에만 존재하며, 로컬 시연 데이터(initialTeams)에는 사용하지 않음.
+export type Team = {
+  id: string;
+  name: string;
+  members: Member[];
+  pendingMembers?: Member[];
+};
 export type Decision = {
   id: string;
   teamId: string;

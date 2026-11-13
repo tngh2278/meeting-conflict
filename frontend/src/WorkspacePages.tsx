@@ -461,6 +461,8 @@ export function TeamPage({
   currentUser,
   onAdd,
   onRole,
+  onRemove,
+  onLeave,
   onCreate,
 }: {
   team: Team;
@@ -468,6 +470,8 @@ export function TeamPage({
   currentUser: Member;
   onAdd: (member: Member) => void;
   onRole: (id: string, role: Role) => void;
+  onRemove: (id: string) => void;
+  onLeave: () => void;
   onCreate: () => void;
 }) {
   const [adding, setAdding] = useState(false);
@@ -476,6 +480,10 @@ export function TeamPage({
   const [hasSearched, setHasSearched] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [result, setResult] = useState<UserSearchResult | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [leaving, setLeaving] = useState(false);
+
+  const pendingMembers = team.pendingMembers ?? [];
 
   async function handleSearch(event: React.FormEvent) {
     event.preventDefault();
@@ -506,22 +514,34 @@ export function TeamPage({
     setHasSearched(false);
   }
 
+  // 검색 결과가 이미 정식 팀원이거나 초대 대기 중인지 판별
+  const isAlreadyMember = result
+    ? team.members.some((member) => member.id === result.id) ||
+      pendingMembers.some((member) => member.id === result.id)
+    : false;
+
   return (
     <>
       <Heading
         title="팀 관리"
-        description="가입된 사용자를 팀에 추가하고, 역할별 접근 권한을 관리합니다."
+        description="가입된 사용자를 팀에 초대하고, 역할별 접근 권한을 관리합니다."
         action={
           <div className="row-actions">
             <button className="button button-secondary" onClick={onCreate}>
               새 팀 만들기
+            </button>
+            <button
+              className="text-button danger-text"
+              onClick={() => setLeaving(true)}
+            >
+              팀 나가기
             </button>
             {role === "admin" && (
               <button
                 className="button button-primary"
                 onClick={() => setAdding(true)}
               >
-                + 팀원 추가
+                + 팀원 초대
               </button>
             )}
           </div>
@@ -542,6 +562,7 @@ export function TeamPage({
                 <th>팀원</th>
                 <th>사용자 ID</th>
                 <th>역할</th>
+                {role === "admin" && <th> </th>}
               </tr>
             </thead>
             <tbody>
@@ -579,11 +600,62 @@ export function TeamPage({
                       "일반 팀원"
                     )}
                   </td>
+                  {role === "admin" && (
+                    <td>
+                      {member.id !== currentUser.id && (
+                        <button
+                          className="text-button danger-text"
+                          onClick={() => setRemovingId(member.id)}
+                        >
+                          제거
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {role === "admin" && pendingMembers.length > 0 && (
+          <div className="subtle-panel stack">
+            <div className="row-between">
+              <h3>초대 대기중</h3>
+              <span className="small muted">수락 전까지 정식 팀원이 아닙니다</span>
+            </div>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>초대한 사용자</th>
+                    <th>사용자 ID</th>
+                    <th>상태</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingMembers.map((member) => (
+                    <tr key={member.id}>
+                      <td>
+                        <span className="avatar small-avatar">
+                          {member.name.slice(-2)}
+                        </span>
+                        <strong>{member.name}</strong>
+                      </td>
+                      <td>
+                        <code className="small muted">
+                          {member.id.slice(0, 8)}…
+                        </code>
+                      </td>
+                      <td>
+                        <span className="badge badge-amber">수락 대기</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
       <section className="card permissions-card">
         <h2>역할별 권한</h2>
@@ -598,23 +670,24 @@ export function TeamPage({
           <div>
             <span className="badge">관리자</span>
             <p>
-              일반 팀원 기능 + 팀원 추가·권한 변경 + 충돌 처리·최종 결정 반영
+              일반 팀원 기능 + 팀원 초대·권한 변경·팀원 제거 + 충돌 처리·최종 결정
+              반영
             </p>
           </div>
         </div>
       </section>
       {adding && (
-        <Modal title="팀원 추가" onClose={closeAdding}>
+        <Modal title="팀원 초대" onClose={closeAdding}>
           <div className="stack">
             <p className="muted">
-              서비스에 가입된 사용자를 이메일로 검색합니다. 검색한 사용자에게
-              미리 안내하여 가입되어 있는지 확인해 주세요.
+              서비스에 가입된 사용자를 이메일로 검색해 초대합니다. 초대받은
+              사용자가 로그인 후 수락하면 정식 팀원으로 표시됩니다.
             </p>
             <form className="row-actions" onSubmit={handleSearch}>
               <input
                 type="email"
                 required
-                aria-label="추가할 팀원 이메일"
+                aria-label="초대할 팀원 이메일"
                 placeholder="가입자 이메일"
                 value={email}
                 onChange={(event) => {
@@ -644,8 +717,8 @@ export function TeamPage({
               <div className="subtle-panel stack">
                 <strong>{result.name}</strong>
                 <p className="small muted">{result.email}</p>
-                {team.members.some((member) => member.id === result.id) ? (
-                  <p className="muted">이미 이 팀에 소속된 사용자입니다.</p>
+                {isAlreadyMember ? (
+                  <p className="muted">이미 이 팀에 소속되었거나 초대 대기 중인 사용자입니다.</p>
                 ) : (
                   <button
                     className="button button-primary"
@@ -659,7 +732,7 @@ export function TeamPage({
                       closeAdding();
                     }}
                   >
-                    일반 팀원으로 추가
+                    초대 보내기
                   </button>
                 )}
               </div>
@@ -669,6 +742,74 @@ export function TeamPage({
                 가입자를 찾지 못했습니다. 이메일을 확인해 주세요.
               </p>
             )}
+          </div>
+        </Modal>
+      )}
+      {removingId && (
+        <Modal
+          title="팀원을 제거할까요?"
+          onClose={() => setRemovingId(null)}
+        >
+          <div className="stack">
+            <p>
+              <strong>
+                {team.members.find((member) => member.id === removingId)?.name}
+              </strong>
+              님을 이 팀에서 제거합니다. 제거된 사용자는 이 팀의 회의록·결정·업무에
+              더 이상 접근할 수 없습니다.
+            </p>
+            <div className="row-actions">
+              <button
+                className="button button-secondary"
+                onClick={() => setRemovingId(null)}
+              >
+                취소
+              </button>
+              <button
+                className="button button-danger"
+                onClick={() => {
+                  onRemove(removingId);
+                  setRemovingId(null);
+                }}
+              >
+                제거
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {leaving && (
+        <Modal title="팀에서 나갈까요?" onClose={() => setLeaving(false)}>
+          <div className="stack">
+            <p>
+              <strong>{team.name}</strong> 팀에서 나갑니다. 이 팀의 회의록·결정·업무
+              데이터는 팀에 남아 있으며, 다시 초대받아 수락해야 볼 수 있습니다.
+            </p>
+            {role === "admin" &&
+              team.members.filter((member) => member.role === "admin")
+                .length === 1 && (
+                <p className="notice-message">
+                  현재 회원님이 이 팀의 유일한 관리자입니다. 다른 팀원을 관리자로
+                  지정한 뒤 나가거나, 팀을 삭제해야 합니다.
+                </p>
+              )}
+            <div className="row-actions">
+              <button
+                className="button button-secondary"
+                onClick={() => setLeaving(false)}
+              >
+                취소
+              </button>
+              <button
+                className="button button-danger"
+                onClick={() => {
+                  onLeave();
+                  setLeaving(false);
+                }}
+              >
+                팀 나가기
+              </button>
+            </div>
           </div>
         </Modal>
       )}
