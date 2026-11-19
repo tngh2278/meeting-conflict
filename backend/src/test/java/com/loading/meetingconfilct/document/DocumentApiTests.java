@@ -8,6 +8,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -22,15 +23,21 @@ import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.security.oauth2.jwt.BadJwtException;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 
 import com.loading.meetingconfilct.ApiCorsConfiguration;
 import com.loading.meetingconfilct.HealthController;
+import com.loading.meetingconfilct.security.SecurityConfig;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest(classes = DocumentApiTests.TestApplication.class,
+        properties = "SUPABASE_URL=https://auth.example.invalid",
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class DocumentApiTests {
 
@@ -47,8 +54,19 @@ class DocumentApiTests {
     @Configuration(proxyBeanMethods = false)
     @EnableAutoConfiguration(exclude = {DataSourceAutoConfiguration.class, HibernateJpaAutoConfiguration.class})
     @Import({DocumentController.class, DocumentTextExtractor.class, DocumentExceptionHandler.class,
-            ApiCorsConfiguration.class, HealthController.class})
+            ApiCorsConfiguration.class, HealthController.class, SecurityConfig.class})
     static class TestApplication {
+        // 실제 Supabase 호출 없이 테스트용 토큰을 검증한다.
+        @Bean
+        JwtDecoder jwtDecoder() {
+            return token -> {
+                if (!"test-token".equals(token)) {
+                    throw new BadJwtException("Invalid test token");
+                }
+                return Jwt.withTokenValue(token).header("alg", "ES256").subject("test-user")
+                        .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(60)).build();
+            };
+        }
     }
 
     @Test
@@ -145,11 +163,13 @@ class DocumentApiTests {
         HttpRequest request = HttpRequest.newBuilder(uri("/api/documents/extract"))
                 .header("Origin", ORIGIN)
                 .header("Access-Control-Request-Method", "POST")
-                .header("Access-Control-Request-Headers", "content-type")
+                .header("Access-Control-Request-Headers", "content-type,authorization")
                 .method("OPTIONS", HttpRequest.BodyPublishers.noBody()).build();
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
         assertThat(response.statusCode()).isEqualTo(200);
         assertCors(response);
+        assertThat(response.headers().firstValue("access-control-allow-headers").orElse(""))
+                .containsIgnoringCase("authorization");
     }
 
     @Test
@@ -170,6 +190,25 @@ class DocumentApiTests {
         assertCors(response);
     }
 
+    @Test
+    void rejectsDocumentRequestsWithoutToken() throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(uri("/api/documents/extract"))
+                .header("Origin", ORIGIN)
+                .POST(HttpRequest.BodyPublishers.noBody()).build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).isEqualTo(401);
+        assertCors(response);
+    }
+
+    @Test
+    void rejectsInvalidTokens() throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(uri("/api/documents/extract"))
+                .header("Origin", ORIGIN)
+                .header("Authorization", "Bearer invalid-token")
+                .POST(HttpRequest.BodyPublishers.noBody()).build();
+        assertThat(client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(401);
+    }
+
     private HttpResponse<String> upload(String fileName, byte[] content) throws Exception {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         body.write(("--" + BOUNDARY + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\""
@@ -182,6 +221,7 @@ class DocumentApiTests {
     private HttpResponse<String> sendMultipart(byte[] body) throws Exception {
         HttpRequest request = HttpRequest.newBuilder(uri("/api/documents/extract"))
                 .header("Origin", ORIGIN)
+                .header("Authorization", "Bearer test-token")
                 .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build();
         return client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));

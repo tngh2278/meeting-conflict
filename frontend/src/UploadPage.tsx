@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import Modal from "./components/Modal";
-import { extractDocument } from "./document-api";
+import { analyzeDocument } from "./document-api";
 import { DEMO_DATE, newParagraphs } from "./demo-data";
 import type { UploadDraft } from "./demo-data";
 
@@ -141,9 +141,9 @@ function UploadPage({
     uploadRequest.current = request;
     setUploading(true);
     try {
-      const extractedDocument = example
+      const analysis = example
         ? undefined
-        : await extractDocument(selectedFile, request.signal);
+        : await analyzeDocument(selectedFile, request.signal);
       onSave({
         file: selectedFile,
         title: meetingTitle.trim(),
@@ -151,13 +151,14 @@ function UploadPage({
         location,
         tags,
         example,
-        extractedDocument,
+        extractedDocument: analysis?.extractedDocument,
+        analysis,
         photos,
         photoConsent,
       });
     } catch (error) {
       if (!request.signal.aborted) {
-        setError(error instanceof Error ? error.message : "텍스트 추출에 실패했습니다. 다시 시도해 주세요.");
+        setError(error instanceof Error ? error.message : "회의록 분석에 실패했습니다. 다시 시도해 주세요.");
       }
     } finally {
       uploadRequest.current = null;
@@ -169,7 +170,7 @@ function UploadPage({
     <>
       <div className="page-heading">
         <h1>회의록 등록</h1>
-        <p>회의록 파일에서 텍스트를 추출하고 페이지·문단별 내용을 확인합니다.</p>
+        <p>회의록에서 결정 사항·담당자·마감일을 추출하고 원문과 함께 확인합니다.</p>
       </div>
 
       <form className="upload-form" onSubmit={handleSubmit} aria-busy={uploading}>
@@ -354,8 +355,8 @@ function UploadPage({
         </fieldset>
 
         <p className="form-description">
-          직접 선택한 문서는 텍스트 추출을 위해 서버로 전송됩니다. 원본과 추출
-          결과의 영구 저장은 아직 지원하지 않으며, 새로고침하면 등록 내용이 사라집니다.
+          직접 선택한 문서는 서버로 전송되고, 추출한 텍스트를 Gemini가 분석합니다.
+          회의록과 분석 결과는 현재 화면에 보관되며 새로고침하면 사라집니다.
         </p>
 
         {error && (
@@ -366,13 +367,12 @@ function UploadPage({
 
         <p className="small muted">
           예시 회의록은 고정된 분석 결과로 화면 흐름을 시연합니다. 직접 선택한
-          파일은 텍스트만 추출하며, AI 결정 추출은 다음 단계에서 연결됩니다.
+          파일은 서버에서 텍스트 추출과 AI 분석을 진행합니다.
         </p>
 
         {uploading && (
           <p className="notice-message" role="status">
-            파일 전송 및 텍스트 추출 중입니다. 서버가 대기 상태였다면 첫 요청에
-            1분 정도 걸릴 수 있습니다.
+            결정 사항과 후속 업무를 분석하고 있습니다. 최대 1분 정도 걸릴 수 있습니다.
           </p>
         )}
 
@@ -381,6 +381,7 @@ function UploadPage({
             type="button"
             className="button button-secondary cancel-button"
             onClick={() => {
+              uploadRequest.current?.abort();
               resetForm();
               onCancel();
             }}
@@ -389,7 +390,7 @@ function UploadPage({
           </button>
 
           <button type="submit" className="button button-primary submit-button" disabled={uploading}>
-            {uploading ? "처리 중…" : example ? "예시 분석 시작" : "텍스트 추출하기"}
+            {uploading ? "분석 중…" : example ? "예시 분석 시작" : "분석 시작"}
           </button>
         </div>
       </form>

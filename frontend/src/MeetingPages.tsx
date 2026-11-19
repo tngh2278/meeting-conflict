@@ -54,9 +54,10 @@ export function SourceButton({
     <button
       className="text-button source-link"
       type="button"
+      disabled={!source.quote}
       onClick={() => onSource(source)}
     >
-      {label} <span aria-hidden="true">↗</span>
+      {source.quote ? label : "원문 근거 확인 필요"} <span aria-hidden="true">↗</span>
     </button>
   );
 }
@@ -200,10 +201,7 @@ export function SourceDocument({
         </article>
       ) : null}
       {source && (
-        <p className="small muted">
-          선택한 근거: 문단 {source.paragraph}. 문서·페이지·문단·문자 위치를
-          연결하는 구조입니다.
-        </p>
+        <blockquote className="paper-text">{source.quote}</blockquote>
       )}
     </div>
   );
@@ -680,8 +678,14 @@ export function ReviewPage({
           <div className="notice-message">
             {locked
               ? "검토 제출이 완료되었습니다. 현재 유효한 결정은 관리자 처리 이후 갱신됩니다."
-              : "AI가 제시한 예시 후보입니다. 원문에 없는 담당자·마감일은 빈칸으로 남겨 주세요."}
+              : "AI가 추출한 내용을 원문과 대조해 검토해 주세요."}
           </div>
+          {meeting.candidates.length === 0 && (
+            <EmptyState
+              title="추출된 결정 사항이 없습니다"
+              description="회의록 원문에서 확정된 결정이나 후속 업무가 있는지 확인해 주세요."
+            />
+          )}
           <div className="stack">
             {meeting.candidates.map((candidate, index) => (
               <section className="card candidate-card" key={candidate.id}>
@@ -726,6 +730,9 @@ export function ReviewPage({
                       }
                     >
                       <option value="">미확인</option>
+                      {candidate.owner && !members.some((member) => member.name === candidate.owner) && (
+                        <option value={candidate.owner}>{candidate.owner}</option>
+                      )}
                       {members.map((member) => (
                         <option key={member.id}>{member.name}</option>
                       ))}

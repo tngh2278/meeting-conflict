@@ -134,7 +134,7 @@ public class MeetingAnalysisService {
             decisions.add(new Decision(item.decision(), item.assignee(), dueDate, source));
         }
 
-        return new AnalysisResult(document.fileName(), decisions);
+        return new AnalysisResult(document.fileName(), decisions, document);
     }
 
     private static Source quoteSource(Source paragraph, String quote) {
@@ -225,7 +225,8 @@ public class MeetingAnalysisService {
             String sourceQuote) {
     }
 
-    public record AnalysisResult(String fileName, List<Decision> decisions) {
+    // 추출한 원문을 함께 반환해 화면에서 근거 위치를 확인한다.
+    public record AnalysisResult(String fileName, List<Decision> decisions, ExtractedDocument extractedDocument) {
     }
 
     public record Decision(String decision, String assignee, LocalDate dueDate, Source source) {
