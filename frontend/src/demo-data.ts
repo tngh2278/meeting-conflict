@@ -1,3 +1,5 @@
+import type { ExtractedDocument } from "./document-api";
+
 // ============================================================================
 // 타입 정의 + 회의록/결정/업무 데모 데이터
 // ============================================================================
@@ -67,6 +69,7 @@ export type Meeting = {
   format: "PDF" | "TXT";
   tags: string;
   paragraphs: string[];
+  extractedDocument?: ExtractedDocument;
   status: "ready" | "analyzing" | "failed" | "review" | "submitted" | "done";
   example: boolean;
   candidates: Candidate[];
@@ -119,7 +122,7 @@ export type UploadDraft = {
   location: string;
   tags: string;
   example: boolean;
-  text: string;
+  extractedDocument?: ExtractedDocument;
   photos: File[];
   photoConsent: boolean;
 };

@@ -127,7 +127,7 @@ export function SourceDocument({
       {meeting.format === "PDF" && meeting.fileUrl ? (
         <>
           <p className="small muted">
-            PDF 원문 미리보기입니다. 실제 PDF 영역 강조는 추후 연결됩니다.
+            PDF 원본 미리보기입니다. 텍스트 추출 결과는 아래에서 확인할 수 있습니다.
           </p>
           <iframe
             className="pdf-preview"
@@ -135,7 +135,42 @@ export function SourceDocument({
             src={`${meeting.fileUrl}#page=${source?.page || 1}`}
           />
         </>
-      ) : (
+      ) : null}
+      {meeting.extractedDocument ? (
+        <article className="document-paper" aria-label="추출한 회의록 텍스트">
+          <div className="paper-heading">
+            <span>EXTRACTED TEXT</span>
+            <h2>텍스트 추출 결과</h2>
+            <p>
+              {meeting.format === "PDF" ? `${meeting.extractedDocument.pages.length}페이지 · ` : ""}
+              문단 {meeting.paragraphs.length}개
+            </p>
+          </div>
+          {meeting.extractedDocument.pages.map((page, pageIndex) => (
+            <section key={pageIndex} aria-label={page.pageNumber === null ? "TXT 문서" : `${page.pageNumber}페이지`}>
+              <h3>{page.pageNumber === null ? "TXT 문서" : `${page.pageNumber}페이지`}</h3>
+              {!page.paragraphs.length && <p className="small muted">추출된 텍스트가 없는 페이지입니다.</p>}
+              {page.paragraphs.map((paragraph) => (
+                <section
+                  key={paragraph.paragraphNumber}
+                  className="source-paragraph"
+                  data-start-offset={paragraph.startOffset}
+                  data-end-offset={paragraph.endOffset}
+                >
+                  <span className="paragraph-number" aria-label={`문단 ${paragraph.paragraphNumber}`}>
+                    {String(paragraph.paragraphNumber).padStart(2, "0")}
+                  </span>
+                  <p>
+                    {source?.page === page.pageNumber && source.paragraph === paragraph.paragraphNumber ? (
+                      <mark aria-label="선택한 원문 근거">{paragraph.text}</mark>
+                    ) : paragraph.text}
+                  </p>
+                </section>
+              ))}
+            </section>
+          ))}
+        </article>
+      ) : meeting.format !== "PDF" ? (
         <article className="document-paper" aria-label="회의록 원문">
           <div className="paper-heading">
             <span>MEETING RECORD</span>
@@ -163,11 +198,11 @@ export function SourceDocument({
             </section>
           ))}
         </article>
-      )}
+      ) : null}
       {source && (
         <p className="small muted">
           선택한 근거: 문단 {source.paragraph}. 문서·페이지·문단·문자 위치를
-          연결하는 구조이며, 현재는 예시 원문을 강조합니다.
+          연결하는 구조입니다.
         </p>
       )}
     </div>
@@ -629,7 +664,7 @@ export function ReviewPage({
         <section className="card">
           <EmptyState
             title="실제 AI 분석은 아직 연결되지 않았습니다"
-            description="직접 선택한 파일의 원문 미리보기는 가능합니다. 예시 회의록을 등록하면 분석 이후 화면을 시연할 수 있습니다."
+            description="원문 탭에서 서버가 추출한 텍스트와 문단을 확인할 수 있습니다. 예시 회의록을 등록하면 AI 분석 이후 화면을 시연할 수 있습니다."
             action={
               <button
                 className="button button-primary"

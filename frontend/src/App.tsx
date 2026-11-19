@@ -361,7 +361,10 @@ export default function App() {
       tags: draft.tags,
       paragraphs: draft.example
         ? newParagraphs
-        : draft.text.split(/\n\s*\n/).filter(Boolean),
+        : draft.extractedDocument?.pages.flatMap((page) =>
+            page.paragraphs.map((paragraph) => paragraph.text),
+          ) ?? [],
+      extractedDocument: draft.extractedDocument,
       status: draft.example ? "analyzing" : "ready",
       example: draft.example,
       candidates,
@@ -372,7 +375,7 @@ export default function App() {
     setToast(
       draft.example
         ? "예시 분석 흐름을 시작했습니다."
-        : "선택한 파일을 시연 화면에 등록했습니다. 서버 저장·실제 분석은 연결 전입니다.",
+        : "텍스트 추출이 완료되었습니다. 원문 탭에서 페이지·문단별 내용을 확인하세요.",
     );
   }
   function submitReview(meeting: Meeting) {
@@ -570,7 +573,7 @@ export default function App() {
             <p className="notice-message">
               회원가입·로그인·팀 관리(팀 생성, 팀원 추가, 역할 변경)는 Supabase와
               연결되어 실제 저장됩니다. 회의록·결정·업무는 아직 로컬 시연
-              데이터로 표시되며, AI 분석은 추후 연결 예정입니다.
+              데이터로 표시됩니다. 직접 선택한 PDF·TXT는 서버에서 텍스트를 추출합니다.
             </p>
             <ol className="help-steps">
               <li>
