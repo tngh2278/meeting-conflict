@@ -341,7 +341,33 @@ export default function App() {
   function saveDraft(draft: UploadDraft) {
     if (!user || !hasTeam) return;
     const id = crypto.randomUUID();
-    const candidates = draft.example
+    // AI 결과를 기존 검토 화면에 맞추고 실제 원문 위치를 연결한다.
+    const candidates: Candidate[] = draft.analysis
+      ? draft.analysis.decisions.map((item, index) => {
+          const paragraph = draft.extractedDocument?.pages
+            .find((page) => page.pageNumber === item.source.pageNumber)
+            ?.paragraphs.find((entry) => entry.paragraphNumber === item.source.paragraphNumber);
+          const quote = item.source.text ?? "";
+          const quoteIndex = quote && paragraph ? paragraph.text.indexOf(quote) : -1;
+          const startOffset = paragraph && quoteIndex >= 0 ? paragraph.startOffset + quoteIndex : null;
+          return {
+            id: `${id}-${index + 1}`,
+            title: item.decision,
+            owner: item.assignee ?? "",
+            dueDate: item.dueDate ?? "",
+            confirmed: true,
+            kind: "new",
+            evidence: {
+              documentId: id,
+              page: item.source.pageNumber,
+              paragraph: item.source.paragraphNumber,
+              startOffset,
+              endOffset: startOffset === null ? null : startOffset + quote.length,
+              quote,
+            },
+          };
+        })
+      : draft.example
       ? exampleCandidates(id).map((candidate) =>
           teamDecisions.length
             ? candidate
@@ -361,18 +387,23 @@ export default function App() {
       tags: draft.tags,
       paragraphs: draft.example
         ? newParagraphs
-        : draft.text.split(/\n\s*\n/).filter(Boolean),
-      status: draft.example ? "analyzing" : "ready",
+        : draft.extractedDocument?.pages.flatMap((page) =>
+            page.paragraphs.map((paragraph) => paragraph.text),
+          ) ?? [],
+      extractedDocument: draft.extractedDocument,
+      status: draft.analysis ? "review" : draft.example ? "analyzing" : "ready",
       example: draft.example,
       candidates,
       photos: draft.photos.map(makePhoto),
     };
     setMeetings((items) => [meeting, ...items]);
-    go(draft.example ? "review" : "meeting", id);
+    go(draft.analysis || draft.example ? "review" : "meeting", id);
     setToast(
       draft.example
         ? "예시 분석 흐름을 시작했습니다."
-        : "선택한 파일을 시연 화면에 등록했습니다. 서버 저장·실제 분석은 연결 전입니다.",
+        : draft.analysis
+          ? `AI 분석이 완료됐습니다. ${candidates.length}개 항목을 검토해 주세요.`
+          : "텍스트 추출이 완료되었습니다. 원문 탭에서 페이지·문단별 내용을 확인하세요.",
     );
   }
   function submitReview(meeting: Meeting) {
@@ -570,7 +601,8 @@ export default function App() {
             <p className="notice-message">
               회원가입·로그인·팀 관리(팀 생성, 팀원 추가, 역할 변경)는 Supabase와
               연결되어 실제 저장됩니다. 회의록·결정·업무는 아직 로컬 시연
-              데이터로 표시되며, AI 분석은 추후 연결 예정입니다.
+              데이터로 표시됩니다. 직접 선택한 PDF·TXT는 서버에서 결정 사항을 분석하고
+              원문과 함께 확인할 수 있습니다.
             </p>
             <ol className="help-steps">
               <li>

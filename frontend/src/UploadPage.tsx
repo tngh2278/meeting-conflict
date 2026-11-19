@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import Modal from "./components/Modal";
+import { analyzeDocument } from "./document-api";
 import { DEMO_DATE, newParagraphs } from "./demo-data";
 import type { UploadDraft } from "./demo-data";
 
@@ -15,6 +16,7 @@ function UploadPage({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef("");
+  const uploadRequest = useRef<AbortController | null>(null);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
@@ -28,8 +30,12 @@ function UploadPage({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoConsent, setPhotoConsent] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
-  useEffect(() => () => URL.revokeObjectURL(previewRef.current), []);
+  useEffect(() => () => {
+    URL.revokeObjectURL(previewRef.current);
+    uploadRequest.current?.abort();
+  }, []);
 
   function selectFile(file: File) {
     setError("");
@@ -109,6 +115,7 @@ function UploadPage({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (uploadRequest.current) return;
     setError("");
 
     if (!selectedFile) {
@@ -130,30 +137,44 @@ function UploadPage({
       setError("회의 사진의 얼굴·위치 정보 처리 안내를 확인해 주세요.");
       return;
     }
-    const text = /\.txt$/i.test(selectedFile.name)
-      ? await selectedFile.text()
-      : "";
-    onSave({
-      file: selectedFile,
-      title: meetingTitle.trim(),
-      date: meetingDate,
-      location,
-      tags,
-      example,
-      text,
-      photos,
-      photoConsent,
-    });
+    const request = new AbortController();
+    uploadRequest.current = request;
+    setUploading(true);
+    try {
+      const analysis = example
+        ? undefined
+        : await analyzeDocument(selectedFile, request.signal);
+      onSave({
+        file: selectedFile,
+        title: meetingTitle.trim(),
+        date: meetingDate,
+        location,
+        tags,
+        example,
+        extractedDocument: analysis?.extractedDocument,
+        analysis,
+        photos,
+        photoConsent,
+      });
+    } catch (error) {
+      if (!request.signal.aborted) {
+        setError(error instanceof Error ? error.message : "회의록 분석에 실패했습니다. 다시 시도해 주세요.");
+      }
+    } finally {
+      uploadRequest.current = null;
+      if (!request.signal.aborted) setUploading(false);
+    }
   }
 
   return (
     <>
       <div className="page-heading">
         <h1>회의록 등록</h1>
-        <p>회의록 원본을 저장하고 AI 분석을 시작합니다.</p>
+        <p>회의록에서 결정 사항·담당자·마감일을 추출하고 원문과 함께 확인합니다.</p>
       </div>
 
-      <form className="upload-form" onSubmit={handleSubmit}>
+      <form className="upload-form" onSubmit={handleSubmit} aria-busy={uploading}>
+        <fieldset className="upload-form upload-fields" disabled={uploading}>
         <section className="upload-card" aria-labelledby="file-heading">
           <h2 id="file-heading">
             {selectedFile ? selectedFile.name : "회의록 파일을 선택하세요"}
@@ -327,13 +348,15 @@ function UploadPage({
             얼굴·위치 정보 처리 안내를 확인했습니다.
           </label>
           <p className="small muted">
-            처리 목적: 회의 사진의 인물·촬영 정보 확인. 화면 시연에서는 파일을
+            처리 목적: 회의 사진의 인물·촬영 정보 확인. 현재 회의 사진은
             외부로 보내지 않으며, 새로고침 시 선택한 파일과 정보가 사라집니다.
           </p>
         </section>
+        </fieldset>
 
         <p className="form-description">
-          분석 후 결정 내용·담당자·마감일과 확정 여부를 직접 검토할 수 있습니다.
+          직접 선택한 문서는 서버로 전송되고, 추출한 텍스트를 Gemini가 분석합니다.
+          회의록과 분석 결과는 현재 화면에 보관되며 새로고침하면 사라집니다.
         </p>
 
         {error && (
@@ -344,14 +367,21 @@ function UploadPage({
 
         <p className="small muted">
           예시 회의록은 고정된 분석 결과로 화면 흐름을 시연합니다. 직접 선택한
-          파일에는 실제 AI 분석이 실행되지 않습니다.
+          파일은 서버에서 텍스트 추출과 AI 분석을 진행합니다.
         </p>
+
+        {uploading && (
+          <p className="notice-message" role="status">
+            결정 사항과 후속 업무를 분석하고 있습니다. 최대 1분 정도 걸릴 수 있습니다.
+          </p>
+        )}
 
         <div className="form-actions">
           <button
             type="button"
             className="button button-secondary cancel-button"
             onClick={() => {
+              uploadRequest.current?.abort();
               resetForm();
               onCancel();
             }}
@@ -359,8 +389,8 @@ function UploadPage({
             취소
           </button>
 
-          <button type="submit" className="button button-primary submit-button">
-            저장하고 분석 시작
+          <button type="submit" className="button button-primary submit-button" disabled={uploading}>
+            {uploading ? "분석 중…" : example ? "예시 분석 시작" : "분석 시작"}
           </button>
         </div>
       </form>

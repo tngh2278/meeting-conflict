@@ -54,9 +54,10 @@ export function SourceButton({
     <button
       className="text-button source-link"
       type="button"
+      disabled={!source.quote}
       onClick={() => onSource(source)}
     >
-      {label} <span aria-hidden="true">↗</span>
+      {source.quote ? label : "원문 근거 확인 필요"} <span aria-hidden="true">↗</span>
     </button>
   );
 }
@@ -127,7 +128,7 @@ export function SourceDocument({
       {meeting.format === "PDF" && meeting.fileUrl ? (
         <>
           <p className="small muted">
-            PDF 원문 미리보기입니다. 실제 PDF 영역 강조는 추후 연결됩니다.
+            PDF 원본 미리보기입니다. 텍스트 추출 결과는 아래에서 확인할 수 있습니다.
           </p>
           <iframe
             className="pdf-preview"
@@ -135,7 +136,42 @@ export function SourceDocument({
             src={`${meeting.fileUrl}#page=${source?.page || 1}`}
           />
         </>
-      ) : (
+      ) : null}
+      {meeting.extractedDocument ? (
+        <article className="document-paper" aria-label="추출한 회의록 텍스트">
+          <div className="paper-heading">
+            <span>EXTRACTED TEXT</span>
+            <h2>텍스트 추출 결과</h2>
+            <p>
+              {meeting.format === "PDF" ? `${meeting.extractedDocument.pages.length}페이지 · ` : ""}
+              문단 {meeting.paragraphs.length}개
+            </p>
+          </div>
+          {meeting.extractedDocument.pages.map((page, pageIndex) => (
+            <section key={pageIndex} aria-label={page.pageNumber === null ? "TXT 문서" : `${page.pageNumber}페이지`}>
+              <h3>{page.pageNumber === null ? "TXT 문서" : `${page.pageNumber}페이지`}</h3>
+              {!page.paragraphs.length && <p className="small muted">추출된 텍스트가 없는 페이지입니다.</p>}
+              {page.paragraphs.map((paragraph) => (
+                <section
+                  key={paragraph.paragraphNumber}
+                  className="source-paragraph"
+                  data-start-offset={paragraph.startOffset}
+                  data-end-offset={paragraph.endOffset}
+                >
+                  <span className="paragraph-number" aria-label={`문단 ${paragraph.paragraphNumber}`}>
+                    {String(paragraph.paragraphNumber).padStart(2, "0")}
+                  </span>
+                  <p>
+                    {source?.page === page.pageNumber && source.paragraph === paragraph.paragraphNumber ? (
+                      <mark aria-label="선택한 원문 근거">{paragraph.text}</mark>
+                    ) : paragraph.text}
+                  </p>
+                </section>
+              ))}
+            </section>
+          ))}
+        </article>
+      ) : meeting.format !== "PDF" ? (
         <article className="document-paper" aria-label="회의록 원문">
           <div className="paper-heading">
             <span>MEETING RECORD</span>
@@ -163,12 +199,9 @@ export function SourceDocument({
             </section>
           ))}
         </article>
-      )}
+      ) : null}
       {source && (
-        <p className="small muted">
-          선택한 근거: 문단 {source.paragraph}. 문서·페이지·문단·문자 위치를
-          연결하는 구조이며, 현재는 예시 원문을 강조합니다.
-        </p>
+        <blockquote className="paper-text">{source.quote}</blockquote>
       )}
     </div>
   );
@@ -629,7 +662,7 @@ export function ReviewPage({
         <section className="card">
           <EmptyState
             title="실제 AI 분석은 아직 연결되지 않았습니다"
-            description="직접 선택한 파일의 원문 미리보기는 가능합니다. 예시 회의록을 등록하면 분석 이후 화면을 시연할 수 있습니다."
+            description="원문 탭에서 서버가 추출한 텍스트와 문단을 확인할 수 있습니다. 예시 회의록을 등록하면 AI 분석 이후 화면을 시연할 수 있습니다."
             action={
               <button
                 className="button button-primary"
@@ -645,8 +678,14 @@ export function ReviewPage({
           <div className="notice-message">
             {locked
               ? "검토 제출이 완료되었습니다. 현재 유효한 결정은 관리자 처리 이후 갱신됩니다."
-              : "AI가 제시한 예시 후보입니다. 원문에 없는 담당자·마감일은 빈칸으로 남겨 주세요."}
+              : "AI가 추출한 내용을 원문과 대조해 검토해 주세요."}
           </div>
+          {meeting.candidates.length === 0 && (
+            <EmptyState
+              title="추출된 결정 사항이 없습니다"
+              description="회의록 원문에서 확정된 결정이나 후속 업무가 있는지 확인해 주세요."
+            />
+          )}
           <div className="stack">
             {meeting.candidates.map((candidate, index) => (
               <section className="card candidate-card" key={candidate.id}>
@@ -691,6 +730,9 @@ export function ReviewPage({
                       }
                     >
                       <option value="">미확인</option>
+                      {candidate.owner && !members.some((member) => member.name === candidate.owner) && (
+                        <option value={candidate.owner}>{candidate.owner}</option>
+                      )}
                       {members.map((member) => (
                         <option key={member.id}>{member.name}</option>
                       ))}

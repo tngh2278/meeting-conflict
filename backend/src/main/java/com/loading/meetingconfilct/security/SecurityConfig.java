@@ -16,6 +16,9 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
+                // 브라우저의 사전 요청을 로그인 검사 전에 처리한다.
+                .cors(Customizer.withDefaults())
+
                 // 이 API는 로그인 쿠키 대신 Authorization 헤더의 토큰을 사용하므로
                 // 쿠키 기반 인증을 보호하는 CSRF 검사를 끈다.
                 .csrf(csrf -> csrf.disable())
