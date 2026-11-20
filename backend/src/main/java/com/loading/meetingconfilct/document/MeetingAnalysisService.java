@@ -35,7 +35,10 @@ public class MeetingAnalysisService {
             실행할 후속 업무면 actionItem을 true, 확정된 일정이나 방침이면 false로 둔다.
             담당자는 명시된 이름만 사용하고, 없으면 assignee를 null로 둔다.
             dueDate에는 후속 업무의 마감일만 yyyy-MM-dd로 적는다.
-            오픈일과 회의일은 decision에 적고 dueDate는 null로 둔다.
+            회의록 상단의 회의 일시, 장소, 참석자, 작성자는 기본 정보이므로 결정 사항에서 제외한다.
+            단순 실적 보고나 진행 현황도 결정 사항에서 제외한다.
+            회의에서 새로 합의한 배포일, 행사일, 차기 회의 일정은 decision에 적고 dueDate는 null로 둔다.
+            예를 들어 "회의 일시: 2026-11-20"은 제외하고, "다음 회의를 11월 27일로 변경하기로 함"은 포함한다.
             연도가 생략된 마감일은 회의 날짜와 문맥에서 연도가 분명할 때만 변환한다.
             마감일을 확정할 수 없으면 dueDate를 null로 둔다.
             근거 문단의 id를 sourceId에 적고, 그 문단에서 근거가 되는 연속된 구절을 sourceQuote에 복사한다.

@@ -166,7 +166,7 @@ export default function App() {
         setTeamId((prev) =>
           prev && result.some((t) => t.id === prev)
             ? prev
-            : result[0]?.id ?? null,
+            : (result[0]?.id ?? null),
         );
       })
       .catch((err: unknown) => {
@@ -346,10 +346,16 @@ export default function App() {
       ? draft.analysis.decisions.map((item, index) => {
           const paragraph = draft.extractedDocument?.pages
             .find((page) => page.pageNumber === item.source.pageNumber)
-            ?.paragraphs.find((entry) => entry.paragraphNumber === item.source.paragraphNumber);
+            ?.paragraphs.find(
+              (entry) => entry.paragraphNumber === item.source.paragraphNumber,
+            );
           const quote = item.source.text ?? "";
-          const quoteIndex = quote && paragraph ? paragraph.text.indexOf(quote) : -1;
-          const startOffset = paragraph && quoteIndex >= 0 ? paragraph.startOffset + quoteIndex : null;
+          const quoteIndex =
+            quote && paragraph ? paragraph.text.indexOf(quote) : -1;
+          const startOffset =
+            paragraph && quoteIndex >= 0
+              ? paragraph.startOffset + quoteIndex
+              : null;
           return {
             id: `${id}-${index + 1}`,
             title: item.decision,
@@ -362,18 +368,19 @@ export default function App() {
               page: item.source.pageNumber,
               paragraph: item.source.paragraphNumber,
               startOffset,
-              endOffset: startOffset === null ? null : startOffset + quote.length,
+              endOffset:
+                startOffset === null ? null : startOffset + quote.length,
               quote,
             },
           };
         })
       : draft.example
-      ? exampleCandidates(id).map((candidate) =>
-          teamDecisions.length
-            ? candidate
-            : { ...candidate, kind: "new" as const },
-        )
-      : [];
+        ? exampleCandidates(id).map((candidate) =>
+            teamDecisions.length
+              ? candidate
+              : { ...candidate, kind: "new" as const },
+          )
+        : [];
     const meeting: Meeting = {
       id,
       teamId: activeTeam.id,
@@ -387,9 +394,9 @@ export default function App() {
       tags: draft.tags,
       paragraphs: draft.example
         ? newParagraphs
-        : draft.extractedDocument?.pages.flatMap((page) =>
+        : (draft.extractedDocument?.pages.flatMap((page) =>
             page.paragraphs.map((paragraph) => paragraph.text),
-          ) ?? [],
+          ) ?? []),
       extractedDocument: draft.extractedDocument,
       status: draft.analysis ? "review" : draft.example ? "analyzing" : "ready",
       example: draft.example,
@@ -551,7 +558,8 @@ export default function App() {
     if (
       target?.role === "admin" &&
       nextRole === "member" &&
-      activeTeam.members.filter((member) => member.role === "admin").length === 1
+      activeTeam.members.filter((member) => member.role === "admin").length ===
+        1
     ) {
       setToast("팀에는 최소 한 명의 관리자가 필요합니다.");
       return;
@@ -599,10 +607,10 @@ export default function App() {
         <Modal title="로딩중 이용 안내" wide onClose={() => setDialog(null)}>
           <div className="stack">
             <p className="notice-message">
-              회원가입·로그인·팀 관리(팀 생성, 팀원 추가, 역할 변경)는 Supabase와
-              연결되어 실제 저장됩니다. 회의록·결정·업무는 아직 로컬 시연
-              데이터로 표시됩니다. 직접 선택한 PDF·TXT는 서버에서 결정 사항을 분석하고
-              원문과 함께 확인할 수 있습니다.
+              회원가입·로그인·팀 관리(팀 생성, 팀원 추가, 역할 변경)는
+              Supabase와 연결되어 실제 저장됩니다. 회의록·결정·업무는 아직 로컬
+              시연 데이터로 표시됩니다. 직접 선택한 PDF·TXT는 서버에서 결정
+              사항을 분석하고 원문과 함께 확인할 수 있습니다.
             </p>
             <ol className="help-steps">
               <li>
@@ -652,8 +660,8 @@ export default function App() {
         <Modal title="로그아웃할까요?" onClose={() => setDialog(null)}>
           <div className="stack">
             <p>
-              로그아웃해도 팀·회의록·결정 데이터는 Supabase에 저장되어 다음 로그인
-              시 그대로 불러옵니다.
+              로그아웃해도 팀·회의록·결정 데이터는 Supabase에 저장되어 다음
+              로그인 시 그대로 불러옵니다.
             </p>
             <div className="row-actions">
               <button
@@ -764,9 +772,7 @@ export default function App() {
       {dialog === "invitations" && (
         <Modal title="받은 팀 초대" onClose={() => setDialog(null)}>
           <div className="stack">
-            {invitationsLoading && (
-              <p className="muted">초대를 불러오는 중…</p>
-            )}
+            {invitationsLoading && <p className="muted">초대를 불러오는 중…</p>}
             {!invitationsLoading && pendingInvitations.length === 0 && (
               <p className="muted">받은 초대가 없습니다.</p>
             )}
@@ -979,7 +985,7 @@ export default function App() {
                 <span>후속 업무</span>
               </div>
             </section>
-          </main> 
+          </main>
           <footer className="landing-footer">
             <p>회의록 · 결정 사항 · 회의 사진을 하나의 기록으로</p>
             <span>로딩중 · 캡스톤 디자인</span>
@@ -1021,7 +1027,9 @@ export default function App() {
                 >
                   초대
                   {pendingInvitations.length > 0 && (
-                    <span className="nav-count">{pendingInvitations.length}</span>
+                    <span className="nav-count">
+                      {pendingInvitations.length}
+                    </span>
                   )}
                 </button>
                 <button
@@ -1293,7 +1301,11 @@ export default function App() {
               />
             )}
             {route.page === "chat" && (
-              <ChatPage decisions={teamDecisions} onSource={setSource} />
+              <ChatPage
+                key={activeTeam.id}
+                meetings={teamMeetings}
+                onSource={setSource}
+              />
             )}
             {route.page === "team" && (
               <TeamPage
@@ -1328,7 +1340,9 @@ export default function App() {
                     // 서버 상태 동기화 (초대 알림은 받는 사람에게만 보이므로 여기선 팀 목록만)
                     const refreshed = await fetchMyTeams().catch(() => teams);
                     setTeams(refreshed);
-                    setToast(`${member.name}님에게 초대를 보냈습니다. 상대방이 수락하면 정식 팀원이 됩니다.`);
+                    setToast(
+                      `${member.name}님에게 초대를 보냈습니다. 상대방이 수락하면 정식 팀원이 됩니다.`,
+                    );
                   } catch (err: unknown) {
                     // 실패 시 원래 상태로 되돌림
                     const refreshed = await fetchMyTeams().catch(() => teams);
@@ -1360,7 +1374,9 @@ export default function App() {
                   );
                   try {
                     await removeMemberRemote(activeTeam.id, memberId);
-                    recordNotice(`${target?.name ?? "팀원"}님을 팀에서 제거했습니다.`);
+                    recordNotice(
+                      `${target?.name ?? "팀원"}님을 팀에서 제거했습니다.`,
+                    );
                   } catch (err: unknown) {
                     const refreshed = await fetchMyTeams().catch(() => teams);
                     setTeams(refreshed);
@@ -1452,7 +1468,6 @@ export default function App() {
     </>
   );
 }
-
 
 function ResolveDialog({
   candidate,
