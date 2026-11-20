@@ -17,6 +17,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.test.web.client.match.MockRestRequestMatchers;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -175,6 +176,8 @@ class DecisionComparisonTests {
         String body = json.writeValueAsString(Map.of("candidates", List.of(Map.of(
                 "finishReason", "STOP", "content", Map.of("parts", List.of(Map.of("text", output)))))));
         gemini.expect(requestTo(endpoint())).andExpect(header("x-goog-api-key", "test-key"))
+                .andExpect(MockRestRequestMatchers.jsonPath("$.generationConfig.thinkingConfig.thinkingLevel")
+                        .value("MEDIUM"))
                 .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
     }
 
