@@ -1360,7 +1360,13 @@ setToast(
               />
             )}
             {route.page === "meetings" && (
-              <MeetingList meetings={teamMeetings} go={go} />
+              meetingsLoading ? (
+                <section className="card">
+                  <p className="muted">회의록을 불러오는 중…</p>
+                </section>
+              ) : (
+                <MeetingList meetings={teamMeetings} go={go} />
+              )
             )}
             {route.page === "upload" && (
               <UploadPage onSave={saveDraft} onCancel={() => go("meetings")} />
