@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { askQuestion, type QuestionSource } from "./question-api";
 import { daysLeft, resolutionLabels } from "./demo-data";
 import type {
   Candidate,
@@ -8,6 +9,7 @@ import type {
   Meeting,
   Member,
   Navigate,
+  Project,
   Role,
   Task,
   Team,
@@ -19,21 +21,28 @@ import { searchUserByEmail, type UserSearchResult } from "./lib/teams";
 export function DecisionsPage({
   meetings,
   decisions,
+  projects,
   history,
   role,
   go,
   onSource,
   onResolve,
+  onInvalidate,
 }: {
   meetings: Meeting[];
   decisions: Decision[];
+  projects: Project[];
   history: ChangeRecord[];
   role: Role;
   go: Navigate;
   onSource: (source: Evidence) => void;
   onResolve: (meeting: Meeting, candidate: Candidate) => void;
+  onInvalidate: (decision: Decision, reason: string) => Promise<string | null>;
 }) {
   const [tab, setTab] = useState(role === "admin" ? "pending" : "current");
+  const [invalidationTarget, setInvalidationTarget] = useState<Decision | null>(null);
+  const projectName = (id: string | undefined) =>
+    projects.find((project) => project.id === id)?.name ?? "미분류";
   const pending = meetings.flatMap((meeting) =>
     meeting.status === "submitted"
       ? meeting.candidates
@@ -46,6 +55,39 @@ export function DecisionsPage({
       .filter((candidate) => candidate.resolution === "hold")
       .map((candidate) => ({ meeting, candidate })),
   );
+  const changes = history.filter((record) => record.method !== "invalidate");
+  const invalidations = history.filter((record) => record.method === "invalidate");
+
+  function renderHistoryRecord(record: ChangeRecord) {
+    return (
+      <article className="history-item" key={record.id}>
+        <div className="row-between">
+          <strong>{resolutionLabels[record.method]}</strong>
+          <span className="small muted">
+            {record.at} · {record.actor}
+          </span>
+        </div>
+        <h3>{record.title}</h3>
+        <div className="history-comparison">
+          <p>
+            <span>이전</span>
+            {record.before}
+          </p>
+          <p>
+            <span>처리 후</span>
+            {record.after}
+          </p>
+        </div>
+        <p className="muted">사유: {record.reason}</p>
+        {meetings.some((meeting) => meeting.id === record.evidence.documentId) ? (
+          <SourceButton source={record.evidence} onSource={onSource} />
+        ) : record.evidence.quote && (
+          <blockquote className="small muted">원문 발췌 · {record.evidence.quote}</blockquote>
+        )}
+      </article>
+    );
+  }
+
   return (
     <>
       <Heading
@@ -97,18 +139,17 @@ export function DecisionsPage({
                     className={`badge ${candidate.kind === "change" ? "badge-amber" : ""}`}
                   >
                     {candidate.kind === "change"
-                      ? "명시적 변경 후보"
-                      : "신규 결정 후보"}
+                      ? "변경 검토 후보"
+                      : "결정 후보"}
                   </span>
                   <span className="small muted">
                     {meeting.date} · {meeting.title}
                   </span>
                 </div>
                 <h2>{candidate.title}</h2>
+                <p className="small muted">프로젝트: {projectName(candidate.projectId)}</p>
                 <p className="muted">
-                  {candidate.kind === "change"
-                    ? "기존 18:00 → 신규 20:00 · 같은 행사와 같은 날짜의 마감 변경"
-                    : `${candidate.owner || "담당자 미확인"} · ${candidate.dueDate || "기한 미확인"}`}
+                  {candidate.owner || "담당자 미확인"} · {candidate.dueDate || "기한 미확인"}
                 </p>
                 <div className="row-actions">
                   <button
@@ -158,12 +199,24 @@ export function DecisionsPage({
                   {decision.exception ? "예외 적용" : "유효"}
                 </span>
                 <h3>{decision.title}</h3>
+                <p className="small muted">프로젝트: {projectName(decision.projectId)}</p>
                 <p className="small muted">
                   {decision.owner || "담당자 미확인"} ·{" "}
                   {decision.dueDate || "기한 미확인"}
                 </p>
               </div>
-              <SourceButton source={decision.evidence} onSource={onSource} />
+              <div className="row-actions">
+                <SourceButton source={decision.evidence} onSource={onSource} />
+                {role === "admin" && (
+                  <button
+                    type="button"
+                    className="button button-secondary small-button"
+                    onClick={() => setInvalidationTarget(decision)}
+                  >
+                    무효 처리
+                  </button>
+                )}
+              </div>
             </div>
           ))}
           {!decisions.length && (
@@ -202,29 +255,13 @@ export function DecisionsPage({
       {tab === "history" && (
         <section className="card stack">
           <h2>결정 변경 이력</h2>
-          {history.map((record) => (
-            <article className="history-item" key={record.id}>
-              <div className="row-between">
-                <strong>{resolutionLabels[record.method]}</strong>
-                <span className="small muted">
-                  {record.at} · {record.actor}
-                </span>
-              </div>
-              <h3>{record.title}</h3>
-              <div className="history-comparison">
-                <p>
-                  <span>이전</span>
-                  {record.before}
-                </p>
-                <p>
-                  <span>처리 후</span>
-                  {record.after}
-                </p>
-              </div>
-              <p className="muted">사유: {record.reason}</p>
-              <SourceButton source={record.evidence} onSource={onSource} />
-            </article>
-          ))}
+          {invalidations.length > 0 && (
+            <details>
+              <summary>무효 처리 {invalidations.length}건 보기</summary>
+              {invalidations.map(renderHistoryRecord)}
+            </details>
+          )}
+          {changes.map(renderHistoryRecord)}
           {!history.length && (
             <EmptyState
               title="아직 처리 이력이 없습니다"
@@ -233,7 +270,69 @@ export function DecisionsPage({
           )}
         </section>
       )}
+      {role === "admin" && invalidationTarget && (
+        <InvalidationDialog
+          decision={invalidationTarget}
+          onInvalidate={onInvalidate}
+          onClose={() => setInvalidationTarget(null)}
+        />
+      )}
     </>
+  );
+}
+
+function InvalidationDialog({
+  decision,
+  onInvalidate,
+  onClose,
+}: {
+  decision: Decision;
+  onInvalidate: (decision: Decision, reason: string) => Promise<string | null>;
+  onClose: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <Modal title="결정 무효 처리" onClose={() => { if (!saving) onClose(); }}>
+      <form
+        className="stack"
+        aria-busy={saving}
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (saving || !reason.trim()) return;
+          setSaving(true);
+          setError(null);
+          const failure = await onInvalidate(decision, reason.trim());
+          setSaving(false);
+          if (failure) setError(failure);
+          else onClose();
+        }}
+      >
+        <p><strong>{decision.title}</strong></p>
+        <p className="muted">유효 목록과 AI 비교 대상에서 제외하고, 처리 사유는 변경 이력에 기록합니다.</p>
+        <label className="field">
+          무효 처리 사유
+          <textarea
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            disabled={saving}
+            rows={3}
+            required
+          />
+        </label>
+        {error && <p className="error-text" role="alert">{error}</p>}
+        <div className="row-actions">
+          <button type="button" className="button button-secondary" onClick={onClose} disabled={saving}>
+            취소
+          </button>
+          <button type="submit" className="button button-danger" disabled={saving || !reason.trim()}>
+            {saving ? "처리 중…" : "무효 처리"}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -352,109 +451,255 @@ export function TasksPage({
     </>
   );
 }
+type ChatMessage = {
+  question: string;
+  answer: string;
+  sources: {
+    fileName: string;
+    evidence: Evidence;
+  }[];
+};
 
-type ChatMessage = { question: string; answer: string; source?: Evidence };
 export function ChatPage({
-  decisions,
+  meetings,
   onSource,
 }: {
-  decisions: Decision[];
+  meetings: Meeting[];
   onSource: (source: Evidence) => void;
 }) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  function send(question: string) {
-    if (!question.trim()) return;
-    const current =
-      decisions.find((decision) => decision.id === "decision-deadline") ||
-      decisions.find((decision) => !decision.exception) ||
-      decisions[0];
-    const exceptionNote = decisions.some((decision) => decision.exception)
-      ? " 별도 예외 항목이 있으므로 적용 조건은 결정 사항에서 확인해 주세요."
-      : "";
-    setMessages((items) => [
-      ...items,
-      {
-        question,
-        answer: current
-          ? `현재 유효한 결정은 “${current.title}”입니다. 담당자는 ${current.owner || "미확인"}입니다. 아래 원문 근거에서 확인할 수 있습니다.${exceptionNote}`
-          : "현재 팀에 반영된 결정이 없어 근거를 제시할 수 없습니다. 회의록 검토와 관리자 처리를 먼저 진행해 주세요.",
-        source: current?.evidence,
-      },
-    ]);
-    setInput("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const requestRef = useRef<AbortController | null>(null);
+
+  // 화면을 나가면 진행 중인 요청을 취소한다.
+  useEffect(() => {
+    return () => {
+      requestRef.current?.abort();
+    };
+  }, []);
+
+  // 실제로 업로드한 회의록의 원문만 질문에 사용한다.
+  const sources: QuestionSource[] = meetings
+    .filter((meeting) => !meeting.example)
+    .flatMap(
+      (meeting) =>
+        meeting.extractedDocument?.pages.flatMap((page) =>
+          page.paragraphs.map((paragraph) => ({
+            documentId: meeting.id,
+            fileName: meeting.fileName || meeting.title,
+            pageNumber: page.pageNumber,
+            paragraphNumber: paragraph.paragraphNumber,
+            text: paragraph.text,
+          })),
+        ) ?? [],
+    );
+
+  async function send(question: string) {
+    const text = question.trim();
+
+    if (!text || !sources.length || requestRef.current) return;
+
+    const request = new AbortController();
+    requestRef.current = request;
+
+    setInput(text);
+    setError("");
+    setPending(true);
+
+    try {
+      const reply = await askQuestion(text, sources, request.signal);
+
+      if (request.signal.aborted) return;
+
+      // 반환된 출처를 기존 원문 보기 기능에 연결한다.
+      const references = reply.sources.map((source) => {
+        const meeting = meetings.find((item) => item.id === source.documentId);
+
+        const paragraph = meeting?.extractedDocument?.pages
+          .find((page) => page.pageNumber === source.pageNumber)
+          ?.paragraphs.find(
+            (item) => item.paragraphNumber === source.paragraphNumber,
+          );
+
+        const quoteIndex = paragraph?.text.indexOf(source.text) ?? -1;
+
+        const startOffset =
+          paragraph && quoteIndex >= 0
+            ? paragraph.startOffset + quoteIndex
+            : null;
+
+        return {
+          fileName: source.fileName,
+          evidence: {
+            documentId: source.documentId,
+            page: source.pageNumber,
+            paragraph: source.paragraphNumber,
+            startOffset,
+            endOffset:
+              startOffset === null ? null : startOffset + source.text.length,
+            quote: source.text,
+          },
+        };
+      });
+
+      setMessages((items) => [
+        ...items,
+        {
+          question: text,
+          answer: reply.answer,
+          sources: references,
+        },
+      ]);
+
+      setInput("");
+    } catch (error) {
+      if (!request.signal.aborted) {
+        setError(
+          error instanceof Error
+            ? error.message
+            : "답변을 가져오지 못했습니다.",
+        );
+      }
+    } finally {
+      requestRef.current = null;
+
+      if (!request.signal.aborted) {
+        setPending(false);
+      }
+    }
   }
+
   return (
     <>
       <Heading
         title="근거 기반 AI 질문"
-        description="팀의 현재 결정과 원문 근거를 함께 확인합니다."
+        description="등록한 회의록에 대해 질문하고 원문 근거를 확인합니다."
       />
+
       <div className="notice-message">
-        화면 시연에서는 현재 유효한 결정에 대한 고정 형식의 예시 답변을
-        표시합니다. 실제 AI 답변 생성은 연결 전입니다.
+        실제 업로드한 회의록의 원문을 기준으로 답변합니다. 대화 기록은 현재
+        화면에서만 유지됩니다.
       </div>
+
+      {!sources.length && (
+        <p className="notice-message">
+          먼저 실제 PDF·TXT 회의록을 업로드하고 분석을 완료해 주세요. 예시
+          회의록은 질문 대상에 포함되지 않습니다.
+        </p>
+      )}
+
       <section className="card chat-card">
         <div className="chat-messages" aria-live="polite">
           {!messages.length && (
             <div className="chat-welcome">
               <span className="chat-mark">Q</span>
-              <h2>지난 회의의 결정이 궁금한가요?</h2>
-              <p className="muted">답변의 근거를 원문으로 직접 확인하세요.</p>
+              <h2>회의록에서 궁금한 내용을 질문해 보세요</h2>
+              <p className="muted">
+                답변의 출처를 눌러 원문을 확인할 수 있습니다.
+              </p>
+
               <div className="row-actions">
                 <button
+                  type="button"
                   className="button button-secondary"
-                  onClick={() => send("현재 자료 제출 마감은 언제인가요?")}
+                  disabled={pending || !sources.length}
+                  onClick={() =>
+                    void send("회의록의 주요 결정 사항을 요약해줘.")
+                  }
                 >
-                  현재 자료 제출 마감은?
+                  주요 결정 사항은?
                 </button>
+
                 <button
+                  type="button"
                   className="button button-secondary"
-                  onClick={() => send("현재 결정의 담당자는 누구인가요?")}
+                  disabled={pending || !sources.length}
+                  onClick={() =>
+                    void send("담당자와 마감일이 명시된 업무를 알려줘.")
+                  }
                 >
-                  담당자는 누구인가요?
+                  담당자와 마감일은?
                 </button>
               </div>
             </div>
           )}
+
           {messages.map((message, index) => (
             <div className="chat-turn" key={index}>
               <div className="chat-question">{message.question}</div>
+
               <div className="chat-answer">
-                <span className="badge badge-gray">예시 답변</span>
-                <p>{message.answer}</p>
-                {message.source && (
-                  <SourceButton source={message.source} onSource={onSource} />
-                )}
+                <span className="badge badge-gray">
+                  {message.sources.length ? "AI 답변" : "근거 확인 불가"}
+                </span>
+
+                <p style={{ whiteSpace: "pre-wrap" }}>{message.answer}</p>
+
+                {message.sources.map((reference, sourceIndex) => (
+                  <SourceButton
+                    key={sourceIndex}
+                    source={reference.evidence}
+                    onSource={onSource}
+                    label={
+                      `${reference.fileName} · ` +
+                      (reference.evidence.page === null
+                        ? ""
+                        : `${reference.evidence.page}페이지 · `) +
+                      `${reference.evidence.paragraph}문단`
+                    }
+                  />
+                ))}
               </div>
             </div>
           ))}
+
+          {pending && (
+            <p className="notice-message" role="status">
+              회의록을 확인하며 답변을 작성하고 있습니다.
+            </p>
+          )}
         </div>
+
+        {error && (
+          <p className="error-message" role="alert">
+            {error}
+          </p>
+        )}
+
         <form
           className="chat-input"
           onSubmit={(event) => {
             event.preventDefault();
-            send(input);
+            void send(input);
           }}
         >
           <label className="sr-only" htmlFor="chat-question">
             질문 입력
           </label>
+
           <input
             id="chat-question"
             value={input}
+            maxLength={1000}
+            disabled={pending || !sources.length}
             onChange={(event) => setInput(event.target.value)}
-            placeholder="회의록과 결정에 대해 질문해 보세요"
+            placeholder="회의록에 대해 질문해 보세요"
           />
-          <button className="button button-primary" disabled={!input.trim()}>
-            질문 보내기
+
+          <button
+            type="submit"
+            className="button button-primary"
+            disabled={pending || !sources.length || !input.trim()}
+          >
+            {pending ? "답변 중…" : "질문 보내기"}
           </button>
         </form>
       </section>
     </>
   );
 }
-
 export function TeamPage({
   team,
   role,

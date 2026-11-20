@@ -9,9 +9,11 @@ import type {
   MeetingPhoto,
   Member,
   Navigate,
+  Project,
   Task,
 } from "./demo-data";
 import MeetingPhotos from "./MeetingPhotos";
+import Modal from "./components/Modal";
 
 export function Heading({
   title,
@@ -346,15 +348,79 @@ export function Overview({
   );
 }
 
+function ProjectForm({
+  onCreateProject,
+  onCreated,
+}: {
+  onCreateProject: (name: string) => Promise<string | null>;
+  onCreated?: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  return (
+    <form
+      className="stack"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        if (saving) return;
+        setSaving(true);
+        try {
+          const message = await onCreateProject(name);
+          setError(message);
+          if (message) return;
+          setName("");
+          onCreated?.();
+        } finally {
+          setSaving(false);
+        }
+      }}
+    >
+      <div className="row-actions project-form-fields">
+        <label className="field">
+          <span>새 프로젝트 이름</span>
+          <input
+            value={name}
+            disabled={saving}
+            required
+            maxLength={100}
+            onChange={(event) => {
+              setName(event.target.value);
+              setError(null);
+            }}
+            placeholder="예: 11월 프로모션"
+          />
+        </label>
+        <button
+          type="submit"
+          className="button button-secondary"
+          disabled={saving || !name.trim()}
+        >
+          프로젝트 추가
+        </button>
+      </div>
+      {error && <p className="error-message" role="alert">{error}</p>}
+    </form>
+  );
+}
+
 export function MeetingList({
   meetings,
   go,
+  onCreateProject,
+  deletingMeetingId,
+  onDelete,
 }: {
   meetings: Meeting[];
   go: Navigate;
+  onCreateProject: (name: string) => Promise<string | null>;
+  deletingMeetingId: string | null;
+  onDelete: (meeting: Meeting) => void;
 }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const rows = meetings.filter(
     (meeting) =>
       `${meeting.title} ${meeting.author} ${meeting.tags}`
@@ -368,14 +434,35 @@ export function MeetingList({
         title="회의록 저장 공간"
         description="원본 파일, 추출 결과, 회의 사진과 처리 상태를 한곳에서 확인합니다."
         action={
-          <button
-            className="button button-primary"
-            onClick={() => go("upload")}
-          >
-            + 회의록 등록
-          </button>
+          <div className="row-actions">
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => setProjectDialogOpen(true)}
+            >
+              + 프로젝트 추가
+            </button>
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={() => go("upload")}
+            >
+              + 회의록 등록
+            </button>
+          </div>
         }
       />
+      {projectDialogOpen && (
+        <Modal
+          title="프로젝트 추가"
+          onClose={() => setProjectDialogOpen(false)}
+        >
+          <ProjectForm
+            onCreateProject={onCreateProject}
+            onCreated={() => setProjectDialogOpen(false)}
+          />
+        </Modal>
+      )}
       <div className="toolbar">
         <label className="search-field">
           <span className="sr-only">회의록 검색</span>
@@ -408,7 +495,7 @@ export function MeetingList({
                 <th>회의록 · 회의일 · 작성자</th>
                 <th>분석 정보</th>
                 <th>회의 사진</th>
-                <th>확인</th>
+                <th>관리</th>
               </tr>
             </thead>
             <tbody>
@@ -443,21 +530,34 @@ export function MeetingList({
                     </button>
                   </td>
                   <td>
-                    <button
-                      className="button button-secondary small-button"
-                      onClick={() =>
-                        go(
-                          meeting.status === "review" ||
-                            meeting.status === "analyzing" ||
-                            meeting.status === "failed"
-                            ? "review"
-                            : "meeting",
-                          meeting.id,
-                        )
-                      }
-                    >
-                      {meeting.status === "review" ? "검토하기" : "보기"}
-                    </button>
+                    <div className="row-actions">
+                      <button
+                        className="button button-secondary small-button"
+                        onClick={() =>
+                          go(
+                            meeting.status === "review" ||
+                              meeting.status === "analyzing" ||
+                              meeting.status === "failed"
+                              ? "review"
+                              : "meeting",
+                            meeting.id,
+                          )
+                        }
+                      >
+                        {meeting.status === "review" ? "검토하기" : "보기"}
+                      </button>
+                      {!meeting.example && (
+                        <button
+                          type="button"
+                          className="button button-secondary small-button"
+                          aria-label={`회의록 ${meeting.title} 삭제`}
+                          disabled={deletingMeetingId !== null}
+                          onClick={() => onDelete(meeting)}
+                        >
+                          {deletingMeetingId === meeting.id ? "삭제 중…" : "삭제"}
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -489,6 +589,7 @@ export function MeetingDetail({
   initialTab,
   go,
   onSource,
+  deletingMeetingId,
   onDelete,
   onAddPhotos,
   onPhotoChange,
@@ -499,6 +600,7 @@ export function MeetingDetail({
   initialTab?: string;
   go: Navigate;
   onSource: (source: Evidence) => void;
+  deletingMeetingId: string | null;
   onDelete: (meeting: Meeting) => void;
   onAddPhotos: (files: File[]) => void;
   onPhotoChange: (photo: MeetingPhoto) => void;
@@ -582,14 +684,12 @@ export function MeetingDetail({
             </button>
             {!meeting.example && (
               <button
+                type="button"
                 className="button button-secondary"
-                onClick={() => {
-                  if (window.confirm(`회의록 "${meeting.title}"을 삭제할까요?`)) {
-                    onDelete(meeting);
-                  }
-                }}
+                disabled={deletingMeetingId !== null}
+                onClick={() => onDelete(meeting)}
               >
-                삭제
+                {deletingMeetingId === meeting.id ? "삭제 중…" : "삭제"}
               </button>
             )}
           </div>
@@ -611,9 +711,12 @@ export function MeetingDetail({
 export function ReviewPage({
   meeting,
   members,
+  projects,
+  onCreateProject,
   go,
   onSource,
   onEdit,
+  submitting,
   onSubmit,
   onStatus,
 }: {
@@ -621,12 +724,20 @@ export function ReviewPage({
   members: Member[];
   go: Navigate;
   onSource: (source: Evidence) => void;
+  projects: Project[];
+  onCreateProject: (name: string) => Promise<string | null>;
   onEdit: (candidate: Candidate) => void;
-  onSubmit: () => void;
+  submitting: boolean;
+  onSubmit: () => Promise<void>;
   onStatus: (status: Meeting["status"]) => void;
 }) {
   const locked = meeting.status === "submitted" || meeting.status === "done";
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const hasUnclassified = meeting.candidates.some(
+    (candidate) =>
+      candidate.confirmed &&
+      !projects.some((project) => project.id === candidate.projectId),
+  );
   return (
     <>
       <button className="back-link" onClick={() => go("meeting", meeting.id)}>
@@ -694,6 +805,15 @@ export function ReviewPage({
               ? "검토 제출이 완료되었습니다. 현재 유효한 결정은 관리자 처리 이후 갱신됩니다."
               : "AI가 추출한 내용을 원문과 대조해 검토해 주세요."}
           </div>
+          {!locked && meeting.candidates.length > 0 && (
+            <section className="card stack">
+              <h2>프로젝트 분류</h2>
+              <p className="muted">
+                한 회의록에 여러 주제가 있으면 결정마다 프로젝트를 다르게 선택하세요.
+              </p>
+              <ProjectForm onCreateProject={onCreateProject} />
+            </section>
+          )}
           {meeting.candidates.length === 0 && (
             <EmptyState
               title="추출된 결정 사항이 없습니다"
@@ -726,18 +846,36 @@ export function ReviewPage({
                   <input
                     id={`title-${candidate.id}`}
                     value={candidate.title}
-                    disabled={locked}
+                    disabled={locked || submitting}
                     onChange={(event) =>
                       onEdit({ ...candidate, title: event.target.value })
                     }
                   />
+                </div>
+                <div className="field">
+                  <label htmlFor={`project-${candidate.id}`}>프로젝트</label>
+                  <select
+                    id={`project-${candidate.id}`}
+                    disabled={locked || submitting}
+                    value={candidate.projectId ?? ""}
+                    onChange={(event) =>
+                      onEdit({ ...candidate, projectId: event.target.value })
+                    }
+                  >
+                    <option value="">미분류 — 프로젝트를 선택하세요</option>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="candidate-fields">
                   <div className="field">
                     <label htmlFor={`owner-${candidate.id}`}>담당자</label>
                     <select
                       id={`owner-${candidate.id}`}
-                      disabled={locked}
+                      disabled={locked || submitting}
                       value={candidate.owner}
                       onChange={(event) =>
                         onEdit({ ...candidate, owner: event.target.value })
@@ -757,7 +895,7 @@ export function ReviewPage({
                     <input
                       id={`due-${candidate.id}`}
                       type="date"
-                      disabled={locked}
+                      disabled={locked || submitting}
                       value={candidate.dueDate}
                       onChange={(event) =>
                         onEdit({ ...candidate, dueDate: event.target.value })
@@ -770,7 +908,7 @@ export function ReviewPage({
                     </label>
                     <select
                       id={`confirmed-${candidate.id}`}
-                      disabled={locked}
+                      disabled={locked || submitting}
                       value={candidate.confirmed ? "confirmed" : "proposal"}
                       onChange={(event) =>
                         onEdit({
@@ -787,6 +925,11 @@ export function ReviewPage({
               </section>
             ))}
           </div>
+          {!locked && hasUnclassified && (
+            <p className="error-message">
+              회의에서 확정한 항목은 프로젝트를 모두 선택해야 제출할 수 있습니다.
+            </p>
+          )}
           <div className="review-footer">
             <p className="muted">
               확정 항목{" "}
@@ -794,7 +937,7 @@ export function ReviewPage({
                 meeting.candidates.filter((candidate) => candidate.confirmed)
                   .length
               }
-              개만 기존 결정과 비교합니다.
+              개의 프로젝트 분류를 확인해 제출합니다.
             </p>
             <div className="row-actions">
               <button
@@ -813,12 +956,13 @@ export function ReviewPage({
               ) : (
                 <button
                   className="button button-primary"
-                  disabled={meeting.candidates.some(
-                    (candidate) => !candidate.title.trim(),
-                  )}
+                  disabled={
+                    submitting || hasUnclassified ||
+                    meeting.candidates.some((candidate) => !candidate.title.trim())
+                  }
                   onClick={() => setConfirmOpen(true)}
                 >
-                  검토 결과 제출
+                  {submitting ? "저장 중…" : "검토 결과 제출"}
                 </button>
               )}
             </div>
@@ -845,7 +989,7 @@ export function ReviewPage({
                   className="button button-primary"
                   onClick={() => {
                     setConfirmOpen(false);
-                    onSubmit();
+                    void onSubmit();
                   }}
                 >
                   제출 확인

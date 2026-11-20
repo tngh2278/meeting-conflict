@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import "./App.css";
 import "./workspace.css";
 import Modal from "./components/Modal";
+import { compareDecision, comparisonLabels, type ComparisonResult } from "./comparison-api";
 import UploadPage from "./UploadPage";
 // import ServerConnectionStatus from "./components/ServerConnectionStatus";
 import AuthDialog from "./components/AuthDialog";
@@ -13,18 +14,21 @@ import {
   initialTasks,
   newParagraphs,
   resolutionLabels,
-  } from "./demo-data";
-  import {
-    fetchTeamMeetings,
-    fetchMeeting as fetchMeetingRemote,
-    saveMeetingToSupabase,
-    fetchTeamDecisions,
-    fetchTeamHistory,
-    updateMeetingStatus,
-    updateConflictCandidate,
-    resolveCandidate,
-    deleteMeeting,
-  } from "./lib/meetings";
+} from "./demo-data";
+import {
+  fetchTeamMeetings,
+  fetchMeetingFileUrl,
+  fetchTeamProjects,
+  createTeamProject,
+  saveMeetingToSupabase,
+  fetchTeamDecisions,
+  fetchTeamHistory,
+  updateMeetingStatus,
+  updateConflictCandidate,
+  resolveCandidate,
+  invalidateDecision,
+  deleteMeeting,
+} from "./lib/meetings";
 import {
   acceptInvitation,
   changeMemberRole as changeMemberRoleRemote,
@@ -46,6 +50,7 @@ import type {
   MeetingPhoto,
   Member,
   Page,
+  Project,
   Resolution,
   Task,
   Team,
@@ -111,6 +116,13 @@ function readRoute() {
   };
 }
 
+function meetingError(message: string, error: unknown) {
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return `${message}: ${error.message}`;
+  }
+  return message;
+}
+
 export default function App() {
   // === Supabase 인증 ===
   // useAuth: Supabase 세션 관리 (실제 로그인, RPC 기반)
@@ -136,9 +148,14 @@ export default function App() {
     PendingInvitation[]
   >([]);
   const [invitationsLoading, setInvitationsLoading] = useState(false);
-    const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(false);
+  const [deletingMeetingId, setDeletingMeetingId] = useState<string | null>(null);
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const candidateWrites = useRef(new Map<string, Promise<void>>());
   const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [decisionsReadyTeamId, setDecisionsReadyTeamId] = useState<string | null>(null);
   const [history, setHistory] = useState<ChangeRecord[]>([]);
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [profiles, setProfiles] = useState<Record<string, FaceProfile>>({});
@@ -176,7 +193,7 @@ export default function App() {
         setTeamId((prev) =>
           prev && result.some((t) => t.id === prev)
             ? prev
-            : result[0]?.id ?? null,
+            : (result[0]?.id ?? null),
         );
       })
       .catch((err: unknown) => {
@@ -230,12 +247,15 @@ export default function App() {
   const teamDecisions = decisions.filter(
     (decision) => decision.teamId === activeTeam.id,
   );
+  const teamProjects = projects.filter(
+    (project) => project.teamId === activeTeam.id,
+  );
   const teamTasks = tasks.filter((task) => task.teamId === activeTeam.id);
   // 이력의 actor는 user_id라서 팀원 목록에서 이름으로 치환해 화면에 표시
   const memberNameById = new Map(
     activeTeam.members.map((m) => [m.id, m.name] as const),
   );
-    const teamHistory = history
+  const teamHistory = history
     .filter((record) => record.teamId === activeTeam.id)
     .map((record) => ({
       ...record,
@@ -302,20 +322,35 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [analyzing]);
 
-   // 활성 팀이 바뀌면 현재 유효한 결정과 변경 이력을 Supabase에서 불러온다.
+  // 활성 팀의 프로젝트, 유효 결정, 변경 이력을 Supabase에서 불러온다.
   useEffect(() => {
+    setDecisionsReadyTeamId(null);
     if (!hasTeam) {
       setDecisions([]);
       setHistory([]);
+      setProjects([]);
       return;
     }
     let cancelled = false;
+    fetchTeamProjects(activeTeam.id)
+      .then((rows) => {
+        if (!cancelled) setProjects((items) => {
+          const byId = new Map([...items, ...rows].map((project) => [project.id, project]));
+          return [...byId.values()];
+        });
+      })
+      .catch((error) => {
+        if (!cancelled) setToast(meetingError("프로젝트 조회 실패", error));
+      });
     fetchTeamDecisions(activeTeam.id)
       .then((rows) => {
-        if (!cancelled) setDecisions(rows);
+        if (!cancelled) {
+          setDecisions(rows);
+          setDecisionsReadyTeamId(activeTeam.id);
+        }
       })
-      .catch(() => {
-        if (!cancelled) setDecisions([]);
+      .catch((error) => {
+        if (!cancelled) setToast(meetingError("현재 결정 조회 실패", error));
       });
     fetchTeamHistory(activeTeam.id)
       .then((rows) => {
@@ -334,6 +369,7 @@ export default function App() {
   useEffect(() => {
     if (!hasTeam) {
       setMeetings([]);
+      setMeetingsLoading(false);
       return;
     }
     let cancelled = false;
@@ -342,8 +378,8 @@ export default function App() {
       .then((rows) => {
         if (!cancelled) setMeetings(rows);
       })
-      .catch(() => {
-        if (!cancelled) setMeetings([]);
+      .catch((error) => {
+        if (!cancelled) setToast(meetingError("회의록 조회 실패", error));
       })
       .finally(() => {
         if (!cancelled) setMeetingsLoading(false);
@@ -354,22 +390,28 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTeam.id, hasTeam]);
 
-  // 목록에선 문단·결정이 비어 있으므로, 상세 진입 시 전체 행을 다시 불러온다.
+  const previewMeeting = sourceMeeting ??
+    (route.page === "meeting" || route.page === "review" ? currentMeeting : undefined);
+  const previewMeetingId = previewMeeting?.id;
+  const needsFileUrl = !!previewMeeting && !previewMeeting.example && !previewMeeting.fileUrl;
+  const previewTeamId = activeTeam.id;
+
   useEffect(() => {
-    if (route.page !== "meeting" && route.page !== "review") return;
-    if (!currentMeeting || currentMeeting.example) return;
-    if (currentMeeting.paragraphs.length > 0) return;
+    if (!previewMeetingId || !needsFileUrl) return;
     let cancelled = false;
-    fetchMeetingRemote(activeTeam.id, currentMeeting.id)
-      .then((m) => {
-        if (!cancelled && m) updateMeeting(currentMeeting.id, () => m);
+    fetchMeetingFileUrl(previewTeamId, previewMeetingId)
+      .then((fileUrl) => {
+        if (!cancelled && fileUrl) {
+          setMeetings((items) => items.map((item) =>
+            item.id === previewMeetingId ? { ...item, fileUrl } : item,
+          ));
+        }
       })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.page, route.id, activeTeam.id]);
+      .catch((error) => {
+        if (!cancelled) setToast(meetingError("원본 파일 주소 조회 실패", error));
+      });
+    return () => { cancelled = true; };
+  }, [needsFileUrl, previewMeetingId, previewTeamId]);
 
   function go(page: Page, id?: string) {
     setDialog(null);
@@ -414,6 +456,40 @@ export default function App() {
     URL.revokeObjectURL(url);
     urls.current = urls.current.filter((item) => item !== url);
   }
+  async function createProject(name: string): Promise<string | null> {
+    const projectName = name.trim();
+    if (!user || !hasTeam) return "프로젝트를 추가할 팀을 선택해 주세요.";
+    if (!projectName) return "프로젝트 이름을 입력해 주세요.";
+    if (teamProjects.some((project) => project.name === projectName)) {
+      return "현재 팀에 같은 이름의 프로젝트가 있습니다.";
+    }
+
+    try {
+      const project = await createTeamProject(activeTeam.id, projectName);
+      setProjects((items) => items.some((item) => item.id === project.id) ? items : [...items, project]);
+      setToast("프로젝트를 추가했습니다.");
+      return null;
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "23505") {
+        return "현재 팀에 같은 이름의 프로젝트가 있습니다.";
+      }
+      return meetingError("프로젝트 추가 실패", error);
+    }
+  }
+
+  function saveReviewCandidate(candidate: Candidate) {
+    const writes = candidateWrites.current;
+    // 빠르게 입력하더라도 같은 후보의 수정은 순서대로 저장한다.
+    const current = writes.get(candidate.id) ?? Promise.resolve();
+    const next = current.catch(() => {}).then(() => updateConflictCandidate(candidate, activeTeam.members));
+    writes.set(candidate.id, next);
+    const clear = () => {
+      if (writes.get(candidate.id) === next) writes.delete(candidate.id);
+    };
+    void next.then(clear, clear);
+    return next;
+  }
+
   function updateMeeting(id: string, update: (meeting: Meeting) => Meeting) {
     if (!hasTeam) return;
     setMeetings((items) =>
@@ -424,20 +500,26 @@ export default function App() {
       ),
     );
   }
-  function saveDraft(draft: UploadDraft) {
+  async function saveDraft(draft: UploadDraft) {
     if (!user || !hasTeam) return;
     const id = crypto.randomUUID();
     // AI 결과를 기존 검토 화면에 맞추고 실제 원문 위치를 연결한다.
     const candidates: Candidate[] = draft.analysis
-      ? draft.analysis.decisions.map((item, index) => {
+      ? draft.analysis.decisions.map((item) => {
           const paragraph = draft.extractedDocument?.pages
             .find((page) => page.pageNumber === item.source.pageNumber)
-            ?.paragraphs.find((entry) => entry.paragraphNumber === item.source.paragraphNumber);
+            ?.paragraphs.find(
+              (entry) => entry.paragraphNumber === item.source.paragraphNumber,
+            );
           const quote = item.source.text ?? "";
-          const quoteIndex = quote && paragraph ? paragraph.text.indexOf(quote) : -1;
-          const startOffset = paragraph && quoteIndex >= 0 ? paragraph.startOffset + quoteIndex : null;
+          const quoteIndex =
+            quote && paragraph ? paragraph.text.indexOf(quote) : -1;
+          const startOffset =
+            paragraph && quoteIndex >= 0
+              ? paragraph.startOffset + quoteIndex
+              : null;
           return {
-            id: `${id}-${index + 1}`,
+            id: crypto.randomUUID(),
             title: item.decision,
             owner: item.assignee ?? "",
             dueDate: item.dueDate ?? "",
@@ -448,18 +530,19 @@ export default function App() {
               page: item.source.pageNumber,
               paragraph: item.source.paragraphNumber,
               startOffset,
-              endOffset: startOffset === null ? null : startOffset + quote.length,
+              endOffset:
+                startOffset === null ? null : startOffset + quote.length,
               quote,
             },
           };
         })
       : draft.example
-      ? exampleCandidates(id).map((candidate) =>
-          teamDecisions.length
-            ? candidate
-            : { ...candidate, kind: "new" as const },
-        )
-      : [];
+        ? exampleCandidates(id).map((candidate) =>
+            teamDecisions.length
+              ? candidate
+              : { ...candidate, kind: "new" as const },
+          )
+        : [];
     const meeting: Meeting = {
       id,
       teamId: activeTeam.id,
@@ -473,15 +556,23 @@ export default function App() {
       tags: draft.tags,
       paragraphs: draft.example
         ? newParagraphs
-        : draft.extractedDocument?.pages.flatMap((page) =>
+        : (draft.extractedDocument?.pages.flatMap((page) =>
             page.paragraphs.map((paragraph) => paragraph.text),
-          ) ?? [],
+          ) ?? []),
       extractedDocument: draft.extractedDocument,
       status: draft.analysis ? "review" : draft.example ? "analyzing" : "ready",
       example: draft.example,
       candidates,
       photos: draft.photos.map(makePhoto),
     };
+    if (!draft.example) {
+      try {
+        await saveMeetingToSupabase(meeting, draft, user.id, activeTeam.members);
+      } catch (error) {
+        releaseUrl(meeting.fileUrl);
+        throw new Error(meetingError("회의록 저장 실패", error));
+      }
+    }
     setMeetings((items) => [meeting, ...items]);
     go(draft.analysis || draft.example ? "review" : "meeting", id);
 setToast(
@@ -492,92 +583,116 @@ setToast(
           : "텍스트 추출이 완료되었습니다. 원문 탭에서 페이지·문단별 내용을 확인하세요.",
     );
 
-    if (!draft.example && user) {
-      void saveMeetingToSupabase(meeting, draft, user.id, activeTeam.members)
-        .then((savedIds) => {
-          // 화면 후보의 임시 id를 DB candidate_id로 교체 →
-          // 검토·처리 화면의 수정/처리가 DB 행과 바로 연결된다.
-          if (savedIds && savedIds.length > 0) {
-            setMeetings((items) =>
-              items.map((item) =>
-                item.id === meeting.id
-                  ? {
-                      ...item,
-                      candidates: item.candidates.map((c, index) =>
-                        savedIds[index] ? { ...c, id: savedIds[index] } : c,
-                      ),
-                    }
-                  : item,
-              ),
-            );
-          }
-          setToast("회의록이 서버에 저장됐습니다.");
-        })
-        .catch((err: unknown) =>
-          setToast(
-            err instanceof Error
-              ? `서버 저장 실패: ${err.message}`
-              : "서버 저장에 실패했습니다.",
-          ),
-        );
-    }
   }
-    function submitReview(meeting: Meeting) {
-      if (meeting.status !== "review") return;
-      const hasConfirmed = meeting.candidates.some(
-        (candidate) => candidate.confirmed,
-      );
-      const nextStatus: Meeting["status"] = hasConfirmed
-        ? "submitted"
-        : "done";
-      updateMeeting(meeting.id, (item) => ({
-        ...item,
-        status: nextStatus,
-      }));
-      // 검토 제출 상태를 DB에도 저장 (예시 회의록 제외)
-      if (!meeting.example) {
-        void updateMeetingStatus(meeting.id, nextStatus).catch(() => {
-          setToast("제출 상태를 서버에 저장하지 못했습니다. 다시 시도해 주세요.");
-        });
+  async function submitReview(meeting: Meeting) {
+    if (meeting.status !== "review" || submittingReview) return;
+
+    // 확정한 결정은 현재 팀의 프로젝트를 선택해야 제출할 수 있다.
+    const hasUnclassified = meeting.candidates.some(
+      (candidate) =>
+        candidate.confirmed &&
+        !teamProjects.some((project) => project.id === candidate.projectId),
+    );
+    if (hasUnclassified) {
+      setToast("확정 항목의 프로젝트를 모두 선택해 주세요.");
+      return;
+    }
+    const nextStatus = meeting.candidates.some((candidate) => candidate.confirmed)
+      ? "submitted"
+      : "done";
+
+    if (!meeting.example) {
+      setSubmittingReview(true);
+      try {
+        await Promise.all(meeting.candidates.map(saveReviewCandidate));
+        await updateMeetingStatus(meeting.id, nextStatus);
+      } catch (error) {
+        setToast(meetingError("검토 결과 저장 실패", error));
+        return;
+      } finally {
+        setSubmittingReview(false);
       }
-      recordNotice(
-        hasConfirmed
-          ? "검토 제출 완료 · 확정 항목을 관리자 확인 대상으로 전달했습니다."
-          : "검토 제출 완료 · 제안·논의 사항만 기록했습니다.",
-      );
-      go(
-        role === "admin" && hasConfirmed ? "decisions" : "meeting",
-        role === "admin" && hasConfirmed ? undefined : meeting.id,
-      );
     }
 
-    async function handleDeleteMeeting(meeting: Meeting) {
-    if (!hasTeam) return;
-    // 예시 회의록은 DB 삭제 없이 로컬만 제거
-    if (!meeting.example) {
-      try {
-        await deleteMeeting(meeting.id);  // meetings.ts에 이미 있음 (소프트 삭제)
-      } catch (err: unknown) {
-        setToast(
-          err instanceof Error
-            ? `삭제 실패: ${err.message}`
-            : "회의록 삭제에 실패했습니다.",
-        );
-        return;
-      }
+    updateMeeting(meeting.id, (item) => ({ ...item, status: nextStatus }));
+    recordNotice(
+      nextStatus === "submitted"
+        ? "검토 제출 완료 · 확정 항목을 관리자 확인 대상으로 전달했습니다."
+        : "검토 제출 완료 · 제안·논의 사항만 기록했습니다.",
+    );
+    go(
+      role === "admin" && nextStatus === "submitted" ? "decisions" : "meeting",
+      role === "admin" && nextStatus === "submitted" ? undefined : meeting.id,
+    );
+  }
+
+  async function handleDeleteMeeting(meeting: Meeting) {
+    if (!hasTeam || meeting.teamId !== activeTeam.id || meeting.example || deletingMeetingId) {
+      return;
     }
-    // 로컬 메모리 URL 해제 + 상태에서 제거
-    releaseUrl(meeting.fileUrl);
-    setMeetings((items) => items.filter((m) => m.id !== meeting.id));
-    setToast("회의록을 삭제했습니다.");
-    go("meetings");
+    if (teamDecisions.some((decision) => decision.evidence.documentId === meeting.id)) {
+      setToast("유효한 결정이 연결된 회의록은 삭제할 수 없습니다.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `회의록 "${meeting.title}"을 삭제할까요? 이 회의록의 결정 후보도 목록에서 사라집니다.`,
+      )
+    ) {
+      return;
+    }
+
+    setDeletingMeetingId(meeting.id);
+    try {
+      await deleteMeeting(meeting.id);
+      releaseUrl(meeting.fileUrl);
+      setMeetings((items) => items.filter((item) => item.id !== meeting.id));
+      setToast("회의록을 삭제했습니다.");
+      const currentRoute = readRoute();
+      if (currentRoute.page === "meeting" && currentRoute.id === meeting.id) {
+        go("meetings");
+      }
+    } catch (error) {
+      setToast(meetingError("회의록 삭제 실패", error));
+    } finally {
+      setDeletingMeetingId(null);
+    }
+  }
+
+  async function handleInvalidateDecision(decision: Decision, reason: string) {
+    if (role !== "admin" || decision.teamId !== activeTeam.id) {
+      return "이 팀의 관리자만 결정을 무효 처리할 수 있습니다.";
+    }
+    try {
+      await invalidateDecision(decision.id, reason);
+    } catch (error) {
+      return meetingError("결정 무효 처리 실패", error);
+    }
+
+    setDecisions((items) => items.filter((item) => item.id !== decision.id));
+    try {
+      const rows = await fetchTeamHistory(decision.teamId);
+      setHistory((items) => [...items.filter((item) => item.teamId !== decision.teamId), ...rows]);
+      setToast("결정을 무효 처리했습니다.");
+    } catch (error) {
+      setToast(meetingError("결정은 무효 처리됐습니다. 이력을 보려면 화면을 새로고침해 주세요", error));
+    }
+    return null;
   }
 
   function openResolution(meeting: Meeting, candidate: Candidate) {
+    if (!meeting.example && decisionsReadyTeamId !== meeting.teamId) {
+      setToast("현재 유효한 결정을 불러온 뒤 다시 시도해 주세요.");
+      return;
+    }
     setResolveTarget({ meetingId: meeting.id, candidateId: candidate.id });
     setDialog("resolve");
   }
-  function applyResolution(method: Resolution | "new", reason: string) {
+  async function applyResolution(
+    method: Resolution | "new",
+    reason: string,
+    previousDecisionId?: string,
+  ) {
     if (
       !user ||
       role !== "admin" ||
@@ -589,43 +704,45 @@ setToast(
         targetCandidate.resolution !== "hold")
     )
       return;
-    const previous =
-      teamDecisions.find((decision) => decision.id === "decision-deadline") ||
-      teamDecisions[0];
-    const nextDecision: Decision = {
-      id:
-        previous && method === "replace" && targetCandidate.kind === "change"
-          ? previous.id
-          : crypto.randomUUID(),
-      teamId: activeTeam.id,
-      title: targetCandidate.title,
-      owner: targetCandidate.owner,
-      dueDate: targetCandidate.dueDate,
-      evidence: targetCandidate.evidence,
-      exception: method === "exception",
-    };
-    if (method === "replace" || method === "exception" || method === "new") {
-      setDecisions((items) =>
-        previous && method === "replace" && targetCandidate.kind === "change"
-          ? items.map((decision) =>
-              decision.id === previous.id ? nextDecision : decision,
-            )
-          : [nextDecision, ...items],
-      );
+    // 선택한 ID와 프로젝트가 일치하는 결정에만 반영한다.
+    const previous = previousDecisionId
+      ? teamDecisions.find(
+          (decision) =>
+            decision.id === previousDecisionId &&
+            !!targetCandidate.projectId &&
+            decision.projectId === targetCandidate.projectId &&
+            decision.evidence.documentId !== targetMeeting.id,
+        )
+      : undefined;
+    if (
+      (targetCandidate.projectId && !teamProjects.some((project) => project.id === targetCandidate.projectId)) ||
+      (previousDecisionId && !previous) ||
+      (method !== "new" && !previous) ||
+      (method === "new" && previous)
+    ) {
+      setToast("비교 대상과 프로젝트를 다시 확인해 주세요.");
+      return;
     }
-    if (method === "replace" && targetCandidate.kind === "change" && previous)
-      setTasks((items) =>
-        items.map((task) =>
-          task.teamId === activeTeam.id && task.decisionId === previous.id
-            ? { ...task, recheck: true }
-            : task,
-        ),
-      );
+    if (!targetMeeting.example) {
+      try {
+        await resolveCandidate({
+          candidateId: targetCandidate.id,
+          method,
+          reason: reason.trim(),
+          previousDecisionId: previous?.id,
+        });
+      } catch (error) {
+        setToast(meetingError("처리 결과 저장 실패", error));
+        return;
+      }
+    }
+
     updateMeeting(targetMeeting.id, (meeting) => {
       const candidates = meeting.candidates.map((candidate) =>
         candidate.id === targetCandidate.id
           ? {
               ...candidate,
+              kind: previous ? ("change" as const) : ("new" as const),
               resolution: method === "new" ? ("replace" as const) : method,
               reason: reason.trim(),
             }
@@ -641,6 +758,54 @@ setToast(
           : "submitted",
       };
     });
+    if (method === "replace" && previous) {
+      setTasks((items) => items.map((task) =>
+        task.teamId === activeTeam.id && task.decisionId === previous.id
+          ? { ...task, recheck: true }
+          : task,
+      ));
+    }
+
+    if (!targetMeeting.example) {
+      const savedTeamId = activeTeam.id;
+      try {
+        const [freshDecisions, freshHistory] = await Promise.all([
+          fetchTeamDecisions(savedTeamId),
+          fetchTeamHistory(savedTeamId),
+        ]);
+        setDecisions((items) => [...items.filter((item) => item.teamId !== savedTeamId), ...freshDecisions]);
+        setHistory((items) => [...items.filter((item) => item.teamId !== savedTeamId), ...freshHistory]);
+        recordNotice(`${resolutionLabels[method]} 처리를 기록했습니다.`);
+      } catch (error) {
+        setDecisionsReadyTeamId(null);
+        setToast(meetingError("결정은 저장됐지만 변경 결과를 불러오지 못했습니다. 다시 접속해 주세요", error));
+      }
+      setDialog(null);
+      return;
+    }
+
+    const nextDecision: Decision = {
+      id:
+        previous && method === "replace"
+          ? previous.id
+          : crypto.randomUUID(),
+      teamId: activeTeam.id,
+      title: targetCandidate.title,
+      projectId: targetCandidate.projectId,
+      owner: targetCandidate.owner,
+      dueDate: targetCandidate.dueDate,
+      evidence: targetCandidate.evidence,
+      exception: method === "exception",
+    };
+    if (method === "replace" || method === "exception" || method === "new") {
+      setDecisions((items) =>
+        previous && method === "replace"
+          ? items.map((decision) =>
+              decision.id === previous.id ? nextDecision : decision,
+            )
+          : [nextDecision, ...items],
+      );
+    }
     const after =
       method === "keep"
         ? previous?.title || "기존 결정 유지"
@@ -652,10 +817,7 @@ setToast(
         id: crypto.randomUUID(),
         teamId: activeTeam.id,
         title: targetCandidate.title,
-        before:
-          targetCandidate.kind === "change"
-            ? previous?.title || "기존 결정 없음"
-            : "신규 결정",
+        before: previous?.title || "신규 결정",
         after,
         method,
         reason: reason.trim(),
@@ -667,33 +829,6 @@ setToast(
     ]);
     recordNotice(`${resolutionLabels[method]} 처리를 기록했습니다.`);
     setDialog(null);
-    // --- DB 저장: 후보 resolved + 결정 반영 + 변경 이력 + 담당자 알림 ---
-    // (예시 회의록 제외. 성공하면 결정·이력을 서버에서 다시 불러와 화면과 맞춘다.)
-    if (!targetMeeting.example) {
-      void resolveCandidate({
-        candidateId: targetCandidate.id,
-        teamId: activeTeam.id,
-        meetingId: targetMeeting.id,
-        method,
-        reason: reason.trim(),
-        actorId: user.id,
-      })
-        .then(async () => {
-          const [freshDecisions, freshHistory] = await Promise.all([
-            fetchTeamDecisions(activeTeam.id),
-            fetchTeamHistory(activeTeam.id),
-          ]);
-          setDecisions(freshDecisions);
-          setHistory(freshHistory);
-        })
-        .catch((err: unknown) =>
-          setToast(
-            err instanceof Error
-              ? `처리 결과 저장 실패: ${err.message}`
-              : "처리 결과 저장에 실패했습니다.",
-          ),
-        );
-    }
   }
   async function createTeam(event: FormEvent) {
     event.preventDefault();
@@ -726,7 +861,8 @@ setToast(
     if (
       target?.role === "admin" &&
       nextRole === "member" &&
-      activeTeam.members.filter((member) => member.role === "admin").length === 1
+      activeTeam.members.filter((member) => member.role === "admin").length ===
+        1
     ) {
       setToast("팀에는 최소 한 명의 관리자가 필요합니다.");
       return;
@@ -774,10 +910,10 @@ setToast(
         <Modal title="로딩중 이용 안내" wide onClose={() => setDialog(null)}>
           <div className="stack">
             <p className="notice-message">
-              회원가입·로그인·팀 관리(팀 생성, 팀원 추가, 역할 변경)는 Supabase와
-              연결되어 실제 저장됩니다. 회의록·결정·업무는 아직 로컬 시연
-              데이터로 표시됩니다. 직접 선택한 PDF·TXT는 서버에서 결정 사항을 분석하고
-              원문과 함께 확인할 수 있습니다.
+              회원가입·로그인·팀 관리(팀 생성, 팀원 추가, 역할 변경)는
+              Supabase와 연결되어 실제 저장됩니다. 회의록·결정·업무는 아직 로컬
+              시연 데이터로 표시됩니다. 직접 선택한 PDF·TXT는 서버에서 결정
+              사항을 분석하고 원문과 함께 확인할 수 있습니다.
             </p>
             <ol className="help-steps">
               <li>
@@ -827,8 +963,8 @@ setToast(
         <Modal title="로그아웃할까요?" onClose={() => setDialog(null)}>
           <div className="stack">
             <p>
-              로그아웃해도 팀·회의록·결정 데이터는 Supabase에 저장되어 다음 로그인
-              시 그대로 불러옵니다.
+              로그아웃해도 팀·회의록·결정 데이터는 Supabase에 저장되어 다음
+              로그인 시 그대로 불러옵니다.
             </p>
             <div className="row-actions">
               <button
@@ -939,9 +1075,7 @@ setToast(
       {dialog === "invitations" && (
         <Modal title="받은 팀 초대" onClose={() => setDialog(null)}>
           <div className="stack">
-            {invitationsLoading && (
-              <p className="muted">초대를 불러오는 중…</p>
-            )}
+            {invitationsLoading && <p className="muted">초대를 불러오는 중…</p>}
             {!invitationsLoading && pendingInvitations.length === 0 && (
               <p className="muted">받은 초대가 없습니다.</p>
             )}
@@ -1005,13 +1139,18 @@ setToast(
         <ResolveDialog
           key={targetCandidate.id}
           candidate={targetCandidate}
-          previous={
-            targetCandidate.kind === "change"
-              ? teamDecisions.find(
-                  (decision) => decision.id === "decision-deadline",
-                ) || teamDecisions[0]
-              : undefined
+          projectName={
+            teamProjects.find(
+              (project) => project.id === targetCandidate.projectId,
+            )?.name ?? "미분류"
           }
+          existing={teamDecisions.filter(
+            (decision) =>
+              !!targetCandidate.projectId &&
+              decision.projectId === targetCandidate.projectId &&
+              decision.evidence.documentId !== targetMeeting.id,
+          )}
+          meetings={teamMeetings}
           admin={role === "admin"}
           onSource={setSource}
           onApply={applyResolution}
@@ -1154,7 +1293,7 @@ setToast(
                 <span>후속 업무</span>
               </div>
             </section>
-          </main> 
+          </main>
           <footer className="landing-footer">
             <p>회의록 · 결정 사항 · 회의 사진을 하나의 기록으로</p>
             <span>로딩중 · 캡스톤 디자인</span>
@@ -1196,7 +1335,9 @@ setToast(
                 >
                   초대
                   {pendingInvitations.length > 0 && (
-                    <span className="nav-count">{pendingInvitations.length}</span>
+                    <span className="nav-count">
+                      {pendingInvitations.length}
+                    </span>
                   )}
                 </button>
                 <button
@@ -1365,7 +1506,13 @@ setToast(
                   <p className="muted">회의록을 불러오는 중…</p>
                 </section>
               ) : (
-                <MeetingList meetings={teamMeetings} go={go} />
+                <MeetingList
+                  meetings={teamMeetings}
+                  go={go}
+                  onCreateProject={createProject}
+                  deletingMeetingId={deletingMeetingId}
+                  onDelete={handleDeleteMeeting}
+                />
               )
             )}
             {route.page === "upload" && (
@@ -1379,6 +1526,7 @@ setToast(
                 initialTab={route.tab}
                 go={go}
                 onSource={setSource}
+                deletingMeetingId={deletingMeetingId}
                 onDelete={handleDeleteMeeting}
                 onAddPhotos={(files) => {
                   const photos = files.map(makePhoto);
@@ -1413,8 +1561,11 @@ setToast(
                 key={currentMeeting.id}
                 meeting={currentMeeting}
                 members={activeTeam.members}
+                projects={teamProjects}
+                onCreateProject={createProject}
                 go={go}
                 onSource={setSource}
+                submitting={submittingReview}
                 onSubmit={() => submitReview(currentMeeting)}
                 onStatus={(status) => {
                   updateMeeting(currentMeeting.id, (meeting) => ({
@@ -1428,7 +1579,7 @@ setToast(
                   }
                 }}
                 onEdit={(candidate) => {
-                  if (currentMeeting.status === "review") {
+                  if (currentMeeting.status === "review" && !submittingReview) {
                     updateMeeting(currentMeeting.id, (meeting) => ({
                       ...meeting,
                       candidates: meeting.candidates.map((item) =>
@@ -1436,13 +1587,8 @@ setToast(
                       ),
                     }));
                     if (!currentMeeting.example) {
-                      void updateConflictCandidate(candidate.id, {
-                        decisionText: candidate.title,
-                        assigneeName: candidate.owner || null,
-                        dueDate: candidate.dueDate || null,
-                        status: candidate.confirmed ? "confirmed" : "pending",
-                      }).catch(() => {
-                        setToast("후보 수정을 서버에 저장하지 못했습니다.");
+                      void saveReviewCandidate(candidate).catch((error) => {
+                        setToast(meetingError("후보 수정 저장 실패", error));
                       });
                     }
                   }
@@ -1468,11 +1614,13 @@ setToast(
                 key={`${activeTeam.id}-${role}`}
                 meetings={teamMeetings}
                 decisions={teamDecisions}
+                projects={teamProjects}
                 history={teamHistory}
                 role={role}
                 go={go}
                 onSource={setSource}
                 onResolve={openResolution}
+                onInvalidate={handleInvalidateDecision}
               />
             )}
             {route.page === "tasks" && (
@@ -1490,7 +1638,11 @@ setToast(
               />
             )}
             {route.page === "chat" && (
-              <ChatPage decisions={teamDecisions} onSource={setSource} />
+              <ChatPage
+                key={activeTeam.id}
+                meetings={teamMeetings}
+                onSource={setSource}
+              />
             )}
             {route.page === "team" && (
               <TeamPage
@@ -1525,7 +1677,9 @@ setToast(
                     // 서버 상태 동기화 (초대 알림은 받는 사람에게만 보이므로 여기선 팀 목록만)
                     const refreshed = await fetchMyTeams().catch(() => teams);
                     setTeams(refreshed);
-                    setToast(`${member.name}님에게 초대를 보냈습니다. 상대방이 수락하면 정식 팀원이 됩니다.`);
+                    setToast(
+                      `${member.name}님에게 초대를 보냈습니다. 상대방이 수락하면 정식 팀원이 됩니다.`,
+                    );
                   } catch (err: unknown) {
                     // 실패 시 원래 상태로 되돌림
                     const refreshed = await fetchMyTeams().catch(() => teams);
@@ -1557,7 +1711,9 @@ setToast(
                   );
                   try {
                     await removeMemberRemote(activeTeam.id, memberId);
-                    recordNotice(`${target?.name ?? "팀원"}님을 팀에서 제거했습니다.`);
+                    recordNotice(
+                      `${target?.name ?? "팀원"}님을 팀에서 제거했습니다.`,
+                    );
                   } catch (err: unknown) {
                     const refreshed = await fetchMyTeams().catch(() => teams);
                     setTeams(refreshed);
@@ -1650,140 +1806,211 @@ setToast(
   );
 }
 
-
 function ResolveDialog({
   candidate,
-  previous,
+  projectName,
+  existing,
+  meetings,
   admin,
   onSource,
   onApply,
   onClose,
 }: {
   candidate: Candidate;
-  previous?: Decision;
+  projectName: string;
+  existing: Decision[];
+  meetings: Meeting[];
   admin: boolean;
   onSource: (source: Evidence) => void;
-  onApply: (method: Resolution | "new", reason: string) => void;
+  onApply: (
+    method: Resolution | "new",
+    reason: string,
+    previousDecisionId?: string,
+  ) => Promise<void>;
   onClose: () => void;
 }) {
-  const [method, setMethod] = useState<Resolution>("replace");
+  // 팝업을 열었을 때의 입력으로 비교하고, 재시도할 때만 다시 요청한다.
+  const [input] = useState(() => ({ candidate, existing, meetings }));
+  const hasExisting = input.existing.length > 0;
+  const [comparison, setComparison] = useState<ComparisonResult | null>(null);
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const [selectedId, setSelectedId] = useState("");
+  const [method, setMethod] = useState<Resolution>("hold");
   const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!hasExisting) return;
+
+    const request = new AbortController();
+    setComparison(null);
+    setError("");
+    setSelectedId("");
+    compareDecision(input.candidate, input.existing, input.meetings, request.signal)
+      .then((result) => {
+        if (request.signal.aborted) return;
+        setComparison(result);
+        // 관련 결정이 여러 개면 사용자가 직접 비교 대상을 고른다.
+        setSelectedId(result.matches.length === 1 ? result.matches[0].decisionId : "");
+      })
+      .catch((error: unknown) => {
+        if (!request.signal.aborted) {
+          setError(error instanceof Error ? error.message : "결정 비교에 실패했습니다.");
+        }
+      });
+    return () => request.abort();
+  }, [hasExisting, input, attempt]);
+
+  const selectedMatch = comparison?.matches.find(
+    (match) => match.decisionId === selectedId,
+  );
+  const previous = selectedMatch
+    ? input.existing.find((decision) => decision.id === selectedMatch.decisionId)
+    : undefined;
+  const needsSelection = !!comparison?.matches.length && !previous;
+  const ready = !hasExisting || (!!comparison && !error && !needsSelection);
+
   return (
     <Modal
-      title={previous ? "기존 결정과 새 후보 비교" : "신규 결정 검토"}
+      title={
+        comparison?.matches.length
+          ? "기존 결정과 새 후보 비교"
+          : ready
+            ? "신규 결정 검토"
+            : "결정 후보 검토"
+      }
       wide
-      onClose={onClose}
+      onClose={() => { if (!saving) onClose(); }}
     >
       <form
         className="stack"
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault();
-          if (admin && reason.trim())
-            onApply(previous ? method : "new", reason);
+          if (!admin || !ready || !reason.trim() || saving) return;
+          setSaving(true);
+          try {
+            await onApply(previous ? method : "new", reason, previous?.id);
+          } finally {
+            setSaving(false);
+          }
         }}
       >
         <p className="muted">
-          원문을 확인한 뒤 적용 대상·조건·시점을 비교해 판단해 주세요.
+          프로젝트: {projectName}
+          {hasExisting
+            ? ` · 다른 회의록의 유효 결정 ${input.existing.length}개와 비교합니다.`
+            : " · 이 프로젝트에 비교할 다른 회의록의 유효 결정이 없습니다."}
         </p>
+        {hasExisting && !comparison && !error && (
+          <p className="notice-message" role="status">
+            같은 업무에 대한 기존 결정을 찾고 차이점을 분석하고 있습니다.
+          </p>
+        )}
+        {error && <p className="error-message" role="alert">{error}</p>}
+        {(error || comparison) && (
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => {
+              setComparison(null);
+              setError("");
+              setSelectedId("");
+              setAttempt((value) => value + 1);
+            }}
+          >
+            다시 비교
+          </button>
+        )}
+        {!!comparison?.matches.length && (
+          <label className="field">
+            <span>비교할 기존 결정</span>
+            <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
+              <option value="">기존 결정을 선택하세요</option>
+              {comparison.matches.map((match) => {
+                const decision = input.existing.find((item) => item.id === match.decisionId);
+                return (
+                  <option key={match.decisionId} value={match.decisionId}>
+                    {comparisonLabels[match.relation]} · {decision?.title}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+        )}
         <div className="comparison-grid">
           {previous && (
             <section className="comparison-card">
               <span className="badge badge-gray">기존 확정 결정</span>
               <h3>{previous.title}</h3>
               <p className="muted">
-                {previous.owner || "담당자 미확인"} ·{" "}
-                {previous.dueDate || "기한 미확인"}
+                {previous.owner || "담당자 미확인"} · {previous.dueDate || "기한 미확인"}
               </p>
-              <SourceButton
-                source={previous.evidence}
-                onSource={onSource}
-                label="기존 결정 원문"
-              />
+              <SourceButton source={previous.evidence} onSource={onSource} label="기존 결정 원문" />
             </section>
           )}
           <section className="comparison-card comparison-new">
             <span className="badge">새 결정 후보</span>
             <h3>{candidate.title}</h3>
             <p className="muted">
-              {candidate.owner || "담당자 미확인"} ·{" "}
-              {candidate.dueDate || "기한 미확인"}
+              {candidate.owner || "담당자 미확인"} · {candidate.dueDate || "기한 미확인"}
             </p>
-            <SourceButton
-              source={candidate.evidence}
-              onSource={onSource}
-              label="새 후보 원문"
-            />
+            <SourceButton source={candidate.evidence} onSource={onSource} label="새 후보 원문" />
           </section>
         </div>
-        <div className="subtle-panel">
-          <strong>예시 분석 사유</strong>
-          <p>
-            {previous
-              ? "적용 대상과 날짜가 같으며, 새 회의록에서 마감 변경을 명시하고 있습니다. 최종 반영 여부는 관리자가 판단합니다."
-              : "사용자가 회의에서 확정한 내용으로 검토한 신규 후보입니다."}
-          </p>
-        </div>
+        {comparison && (
+          <div className="subtle-panel">
+            <strong>{selectedMatch ? comparisonLabels[selectedMatch.relation] : "AI 비교 결과"}</strong>
+            <p>{selectedMatch?.reason ?? comparison.reason}</p>
+            {needsSelection && <p>관련 기존 결정 중 비교할 항목을 선택해 주세요.</p>}
+          </div>
+        )}
         {admin ? (
           <>
             {previous && (
               <fieldset className="resolution-options">
                 <legend>처리 방식 선택</legend>
-                {(["keep", "replace", "exception", "hold"] as const).map(
-                  (value) => (
-                    <label
-                      key={value}
-                      className={method === value ? "selected" : ""}
-                    >
-                      <input
-                        type="radio"
-                        name="resolution"
-                        value={value}
-                        checked={method === value}
-                        onChange={() => setMethod(value)}
-                      />
-                      {resolutionLabels[value]}
-                    </label>
-                  ),
-                )}
+                {(["keep", "replace", "exception", "hold"] as const).map((value) => (
+                  <label key={value} className={method === value ? "selected" : ""}>
+                    <input
+                      type="radio"
+                      name="resolution"
+                      value={value}
+                      checked={method === value}
+                      onChange={() => setMethod(value)}
+                    />
+                    {resolutionLabels[value]}
+                  </label>
+                ))}
               </fieldset>
             )}
             <label className="field">
-              <span>
-                처리 사유 <span className="required">필수</span>
-              </span>
+              <span>처리 사유 <span className="required">필수</span></span>
               <textarea
                 rows={3}
                 required
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
                 placeholder={
-                  method === "exception"
-                    ? "예외를 적용할 대상·기간·조건과 사유를 기록하세요."
-                    : "원문을 확인한 뒤 선택한 처리 사유를 남겨 주세요."
+                  previous
+                    ? "양쪽 원문을 확인하고 처리 사유를 적어 주세요."
+                    : "새 후보의 원문을 확인하고 반영 사유를 적어 주세요."
                 }
               />
             </label>
             <div className="row-actions">
-              <button
-                className="button button-secondary"
-                type="button"
-                onClick={onClose}
-              >
+              <button className="button button-secondary" type="button" onClick={onClose} disabled={saving}>
                 취소
               </button>
-              <button
-                className="button button-primary"
-                disabled={!reason.trim()}
-              >
+              <button className="button button-primary" disabled={saving || !ready || !reason.trim()}>
                 {previous ? "선택한 방식으로 처리" : "현재 결정에 반영"}
               </button>
             </div>
           </>
         ) : (
-          <div className="notice-message">
-            일반 팀원은 비교 내용과 원문을 확인할 수 있습니다. 최종 결정 처리는
-            관리자 권한이 필요합니다.
-          </div>
+          <p className="notice-message">
+            비교 내용과 원문을 확인할 수 있습니다. 최종 처리는 관리자 권한이 필요합니다.
+          </p>
         )}
       </form>
     </Modal>
