@@ -107,7 +107,7 @@ export type ChangeRecord = {
   title: string;
   before: string;
   after: string;
-  method: Resolution | "new";
+  method: Resolution | "new" | "invalidate";
   reason: string;
   actor: string;
   at: string;
@@ -149,12 +149,13 @@ export function daysLeft(date: string) {
       ? `D-${difference}`
       : `D+${Math.abs(difference)}`;
 }
-export const resolutionLabels: Record<Resolution | "new", string> = {
+export const resolutionLabels: Record<ChangeRecord["method"], string> = {
   keep: "기존 결정 유지",
   replace: "새 결정으로 교체",
   exception: "예외로 두기",
   hold: "논의 중으로 보류",
   new: "신규 결정 반영",
+  invalidate: "무효 처리",
 };
 export const statusLabels: Record<Meeting["status"], string> = {
   ready: "분석 대기",

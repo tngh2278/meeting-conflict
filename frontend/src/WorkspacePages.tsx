@@ -27,6 +27,7 @@ export function DecisionsPage({
   go,
   onSource,
   onResolve,
+  onInvalidate,
 }: {
   meetings: Meeting[];
   decisions: Decision[];
@@ -36,8 +37,10 @@ export function DecisionsPage({
   go: Navigate;
   onSource: (source: Evidence) => void;
   onResolve: (meeting: Meeting, candidate: Candidate) => void;
+  onInvalidate: (decision: Decision, reason: string) => Promise<string | null>;
 }) {
   const [tab, setTab] = useState(role === "admin" ? "pending" : "current");
+  const [invalidationTarget, setInvalidationTarget] = useState<Decision | null>(null);
   const projectName = (id: string | undefined) =>
     projects.find((project) => project.id === id)?.name ?? "미분류";
   const pending = meetings.flatMap((meeting) =>
@@ -52,6 +55,39 @@ export function DecisionsPage({
       .filter((candidate) => candidate.resolution === "hold")
       .map((candidate) => ({ meeting, candidate })),
   );
+  const changes = history.filter((record) => record.method !== "invalidate");
+  const invalidations = history.filter((record) => record.method === "invalidate");
+
+  function renderHistoryRecord(record: ChangeRecord) {
+    return (
+      <article className="history-item" key={record.id}>
+        <div className="row-between">
+          <strong>{resolutionLabels[record.method]}</strong>
+          <span className="small muted">
+            {record.at} · {record.actor}
+          </span>
+        </div>
+        <h3>{record.title}</h3>
+        <div className="history-comparison">
+          <p>
+            <span>이전</span>
+            {record.before}
+          </p>
+          <p>
+            <span>처리 후</span>
+            {record.after}
+          </p>
+        </div>
+        <p className="muted">사유: {record.reason}</p>
+        {meetings.some((meeting) => meeting.id === record.evidence.documentId) ? (
+          <SourceButton source={record.evidence} onSource={onSource} />
+        ) : record.evidence.quote && (
+          <blockquote className="small muted">원문 발췌 · {record.evidence.quote}</blockquote>
+        )}
+      </article>
+    );
+  }
+
   return (
     <>
       <Heading
@@ -169,7 +205,18 @@ export function DecisionsPage({
                   {decision.dueDate || "기한 미확인"}
                 </p>
               </div>
-              <SourceButton source={decision.evidence} onSource={onSource} />
+              <div className="row-actions">
+                <SourceButton source={decision.evidence} onSource={onSource} />
+                {role === "admin" && (
+                  <button
+                    type="button"
+                    className="button button-secondary small-button"
+                    onClick={() => setInvalidationTarget(decision)}
+                  >
+                    무효 처리
+                  </button>
+                )}
+              </div>
             </div>
           ))}
           {!decisions.length && (
@@ -208,29 +255,13 @@ export function DecisionsPage({
       {tab === "history" && (
         <section className="card stack">
           <h2>결정 변경 이력</h2>
-          {history.map((record) => (
-            <article className="history-item" key={record.id}>
-              <div className="row-between">
-                <strong>{resolutionLabels[record.method]}</strong>
-                <span className="small muted">
-                  {record.at} · {record.actor}
-                </span>
-              </div>
-              <h3>{record.title}</h3>
-              <div className="history-comparison">
-                <p>
-                  <span>이전</span>
-                  {record.before}
-                </p>
-                <p>
-                  <span>처리 후</span>
-                  {record.after}
-                </p>
-              </div>
-              <p className="muted">사유: {record.reason}</p>
-              <SourceButton source={record.evidence} onSource={onSource} />
-            </article>
-          ))}
+          {invalidations.length > 0 && (
+            <details>
+              <summary>무효 처리 {invalidations.length}건 보기</summary>
+              {invalidations.map(renderHistoryRecord)}
+            </details>
+          )}
+          {changes.map(renderHistoryRecord)}
           {!history.length && (
             <EmptyState
               title="아직 처리 이력이 없습니다"
@@ -239,7 +270,69 @@ export function DecisionsPage({
           )}
         </section>
       )}
+      {role === "admin" && invalidationTarget && (
+        <InvalidationDialog
+          decision={invalidationTarget}
+          onInvalidate={onInvalidate}
+          onClose={() => setInvalidationTarget(null)}
+        />
+      )}
     </>
+  );
+}
+
+function InvalidationDialog({
+  decision,
+  onInvalidate,
+  onClose,
+}: {
+  decision: Decision;
+  onInvalidate: (decision: Decision, reason: string) => Promise<string | null>;
+  onClose: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <Modal title="결정 무효 처리" onClose={() => { if (!saving) onClose(); }}>
+      <form
+        className="stack"
+        aria-busy={saving}
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (saving || !reason.trim()) return;
+          setSaving(true);
+          setError(null);
+          const failure = await onInvalidate(decision, reason.trim());
+          setSaving(false);
+          if (failure) setError(failure);
+          else onClose();
+        }}
+      >
+        <p><strong>{decision.title}</strong></p>
+        <p className="muted">유효 목록과 AI 비교 대상에서 제외하고, 처리 사유는 변경 이력에 기록합니다.</p>
+        <label className="field">
+          무효 처리 사유
+          <textarea
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            disabled={saving}
+            rows={3}
+            required
+          />
+        </label>
+        {error && <p className="error-text" role="alert">{error}</p>}
+        <div className="row-actions">
+          <button type="button" className="button button-secondary" onClick={onClose} disabled={saving}>
+            취소
+          </button>
+          <button type="submit" className="button button-danger" disabled={saving || !reason.trim()}>
+            {saving ? "처리 중…" : "무효 처리"}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

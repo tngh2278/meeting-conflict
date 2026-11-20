@@ -26,6 +26,7 @@ import {
   updateMeetingStatus,
   updateConflictCandidate,
   resolveCandidate,
+  invalidateDecision,
   deleteMeeting,
 } from "./lib/meetings";
 import {
@@ -150,6 +151,7 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(false);
+  const [deletingMeetingId, setDeletingMeetingId] = useState<string | null>(null);
   const [submittingReview, setSubmittingReview] = useState(false);
   const candidateWrites = useRef(new Map<string, Promise<void>>());
   const [decisions, setDecisions] = useState<Decision[]>([]);
@@ -625,25 +627,57 @@ setToast(
   }
 
   async function handleDeleteMeeting(meeting: Meeting) {
-    if (!hasTeam) return;
-    // 예시 회의록은 DB 삭제 없이 로컬만 제거
-    if (!meeting.example) {
-      try {
-        await deleteMeeting(meeting.id);  // meetings.ts에 이미 있음 (소프트 삭제)
-      } catch (err: unknown) {
-        setToast(
-          err instanceof Error
-            ? `삭제 실패: ${err.message}`
-            : "회의록 삭제에 실패했습니다.",
-        );
-        return;
-      }
+    if (!hasTeam || meeting.teamId !== activeTeam.id || meeting.example || deletingMeetingId) {
+      return;
     }
-    // 로컬 메모리 URL 해제 + 상태에서 제거
-    releaseUrl(meeting.fileUrl);
-    setMeetings((items) => items.filter((m) => m.id !== meeting.id));
-    setToast("회의록을 삭제했습니다.");
-    go("meetings");
+    if (teamDecisions.some((decision) => decision.evidence.documentId === meeting.id)) {
+      setToast("유효한 결정이 연결된 회의록은 삭제할 수 없습니다.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `회의록 "${meeting.title}"을 삭제할까요? 이 회의록의 결정 후보도 목록에서 사라집니다.`,
+      )
+    ) {
+      return;
+    }
+
+    setDeletingMeetingId(meeting.id);
+    try {
+      await deleteMeeting(meeting.id);
+      releaseUrl(meeting.fileUrl);
+      setMeetings((items) => items.filter((item) => item.id !== meeting.id));
+      setToast("회의록을 삭제했습니다.");
+      const currentRoute = readRoute();
+      if (currentRoute.page === "meeting" && currentRoute.id === meeting.id) {
+        go("meetings");
+      }
+    } catch (error) {
+      setToast(meetingError("회의록 삭제 실패", error));
+    } finally {
+      setDeletingMeetingId(null);
+    }
+  }
+
+  async function handleInvalidateDecision(decision: Decision, reason: string) {
+    if (role !== "admin" || decision.teamId !== activeTeam.id) {
+      return "이 팀의 관리자만 결정을 무효 처리할 수 있습니다.";
+    }
+    try {
+      await invalidateDecision(decision.id, reason);
+    } catch (error) {
+      return meetingError("결정 무효 처리 실패", error);
+    }
+
+    setDecisions((items) => items.filter((item) => item.id !== decision.id));
+    try {
+      const rows = await fetchTeamHistory(decision.teamId);
+      setHistory((items) => [...items.filter((item) => item.teamId !== decision.teamId), ...rows]);
+      setToast("결정을 무효 처리했습니다.");
+    } catch (error) {
+      setToast(meetingError("결정은 무효 처리됐습니다. 이력을 보려면 화면을 새로고침해 주세요", error));
+    }
+    return null;
   }
 
   function openResolution(meeting: Meeting, candidate: Candidate) {
@@ -1476,6 +1510,8 @@ setToast(
                   meetings={teamMeetings}
                   go={go}
                   onCreateProject={createProject}
+                  deletingMeetingId={deletingMeetingId}
+                  onDelete={handleDeleteMeeting}
                 />
               )
             )}
@@ -1490,6 +1526,7 @@ setToast(
                 initialTab={route.tab}
                 go={go}
                 onSource={setSource}
+                deletingMeetingId={deletingMeetingId}
                 onDelete={handleDeleteMeeting}
                 onAddPhotos={(files) => {
                   const photos = files.map(makePhoto);
@@ -1583,6 +1620,7 @@ setToast(
                 go={go}
                 onSource={setSource}
                 onResolve={openResolution}
+                onInvalidate={handleInvalidateDecision}
               />
             )}
             {route.page === "tasks" && (

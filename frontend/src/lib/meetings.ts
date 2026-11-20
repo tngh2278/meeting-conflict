@@ -454,7 +454,10 @@ export async function deleteMeeting(meetingId: string): Promise<void> {
   const { error } = await supabase
     .from("meetings")
     .update({ deleted_at: new Date().toISOString() })
-    .eq("meeting_id", meetingId);
+    .eq("meeting_id", meetingId)
+    .is("deleted_at", null)
+    .select("meeting_id")
+    .single();
   if (error) throw error;
 }
 
@@ -569,6 +572,14 @@ export async function resolveCandidate(input: {
   if (error) throw error;
 }
 
+export async function invalidateDecision(decisionId: string, reason: string): Promise<void> {
+  const { error } = await supabase.rpc("invalidate_meeting_decision", {
+    p_decision_id: decisionId,
+    p_reason: reason,
+  });
+  if (error) throw error;
+}
+
 // ===========================================================================
 // 18. fetchTeamHistory — 결정 변경 이력 조회 (NEW, 3단계)
 //     처리자 이름(users)은 users RLS 때문에 여기서 조인할 수 없어
@@ -578,7 +589,7 @@ interface HistoryRow {
   history_id: string;
   decision_id: string | null;
   meeting_id: string | null;
-  method: "new" | "keep" | "replace" | "exception" | "hold";
+  method: ChangeRecord["method"];
   before_text: string | null;
   after_text: string | null;
   reason: string | null;
@@ -602,7 +613,8 @@ export async function fetchTeamHistory(teamId: string): Promise<ChangeRecord[]> 
   return (data as HistoryRow[]).map((row) => ({
     id: row.history_id,
     teamId,
-    title: row.after_text ?? row.before_text ?? "결정 처리",
+    title: (row.method === "invalidate" ? row.before_text : row.after_text)
+      ?? row.before_text ?? "결정 처리",
     before: row.before_text ?? "",
     after: row.after_text ?? "",
     method: row.method,

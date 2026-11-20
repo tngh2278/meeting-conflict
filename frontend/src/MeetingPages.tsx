@@ -409,10 +409,14 @@ export function MeetingList({
   meetings,
   go,
   onCreateProject,
+  deletingMeetingId,
+  onDelete,
 }: {
   meetings: Meeting[];
   go: Navigate;
   onCreateProject: (name: string) => Promise<string | null>;
+  deletingMeetingId: string | null;
+  onDelete: (meeting: Meeting) => void;
 }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
@@ -491,7 +495,7 @@ export function MeetingList({
                 <th>회의록 · 회의일 · 작성자</th>
                 <th>분석 정보</th>
                 <th>회의 사진</th>
-                <th>확인</th>
+                <th>관리</th>
               </tr>
             </thead>
             <tbody>
@@ -526,21 +530,34 @@ export function MeetingList({
                     </button>
                   </td>
                   <td>
-                    <button
-                      className="button button-secondary small-button"
-                      onClick={() =>
-                        go(
-                          meeting.status === "review" ||
-                            meeting.status === "analyzing" ||
-                            meeting.status === "failed"
-                            ? "review"
-                            : "meeting",
-                          meeting.id,
-                        )
-                      }
-                    >
-                      {meeting.status === "review" ? "검토하기" : "보기"}
-                    </button>
+                    <div className="row-actions">
+                      <button
+                        className="button button-secondary small-button"
+                        onClick={() =>
+                          go(
+                            meeting.status === "review" ||
+                              meeting.status === "analyzing" ||
+                              meeting.status === "failed"
+                              ? "review"
+                              : "meeting",
+                            meeting.id,
+                          )
+                        }
+                      >
+                        {meeting.status === "review" ? "검토하기" : "보기"}
+                      </button>
+                      {!meeting.example && (
+                        <button
+                          type="button"
+                          className="button button-secondary small-button"
+                          aria-label={`회의록 ${meeting.title} 삭제`}
+                          disabled={deletingMeetingId !== null}
+                          onClick={() => onDelete(meeting)}
+                        >
+                          {deletingMeetingId === meeting.id ? "삭제 중…" : "삭제"}
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -572,6 +589,7 @@ export function MeetingDetail({
   initialTab,
   go,
   onSource,
+  deletingMeetingId,
   onDelete,
   onAddPhotos,
   onPhotoChange,
@@ -582,6 +600,7 @@ export function MeetingDetail({
   initialTab?: string;
   go: Navigate;
   onSource: (source: Evidence) => void;
+  deletingMeetingId: string | null;
   onDelete: (meeting: Meeting) => void;
   onAddPhotos: (files: File[]) => void;
   onPhotoChange: (photo: MeetingPhoto) => void;
@@ -665,14 +684,12 @@ export function MeetingDetail({
             </button>
             {!meeting.example && (
               <button
+                type="button"
                 className="button button-secondary"
-                onClick={() => {
-                  if (window.confirm(`회의록 "${meeting.title}"을 삭제할까요?`)) {
-                    onDelete(meeting);
-                  }
-                }}
+                disabled={deletingMeetingId !== null}
+                onClick={() => onDelete(meeting)}
               >
-                삭제
+                {deletingMeetingId === meeting.id ? "삭제 중…" : "삭제"}
               </button>
             )}
           </div>
