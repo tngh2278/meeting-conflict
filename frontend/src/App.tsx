@@ -10,12 +10,21 @@ import { useAuth } from "./hooks/useAuth";
 import type { AuthUser } from "./hooks/useAuth";
 import {
   exampleCandidates,
-  initialDecisions,
-  initialMeetings,
   initialTasks,
   newParagraphs,
   resolutionLabels,
-} from "./demo-data";
+  } from "./demo-data";
+  import {
+    fetchTeamMeetings,
+    fetchMeeting as fetchMeetingRemote,
+    saveMeetingToSupabase,
+    fetchTeamDecisions,
+    fetchTeamHistory,
+    updateMeetingStatus,
+    updateConflictCandidate,
+    resolveCandidate,
+    deleteMeeting,
+  } from "./lib/meetings";
 import {
   acceptInvitation,
   changeMemberRole as changeMemberRoleRemote,
@@ -127,8 +136,9 @@ export default function App() {
     PendingInvitation[]
   >([]);
   const [invitationsLoading, setInvitationsLoading] = useState(false);
-  const [meetings, setMeetings] = useState<Meeting[]>(initialMeetings);
-  const [decisions, setDecisions] = useState<Decision[]>(initialDecisions);
+    const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [meetingsLoading, setMeetingsLoading] = useState(false);
+  const [decisions, setDecisions] = useState<Decision[]>([]);
   const [history, setHistory] = useState<ChangeRecord[]>([]);
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [profiles, setProfiles] = useState<Record<string, FaceProfile>>({});
@@ -221,9 +231,16 @@ export default function App() {
     (decision) => decision.teamId === activeTeam.id,
   );
   const teamTasks = tasks.filter((task) => task.teamId === activeTeam.id);
-  const teamHistory = history.filter(
-    (record) => record.teamId === activeTeam.id,
+  // 이력의 actor는 user_id라서 팀원 목록에서 이름으로 치환해 화면에 표시
+  const memberNameById = new Map(
+    activeTeam.members.map((m) => [m.id, m.name] as const),
   );
+    const teamHistory = history
+    .filter((record) => record.teamId === activeTeam.id)
+    .map((record) => ({
+      ...record,
+      actor: memberNameById.get(record.actor) ?? record.actor,
+    }));
   const currentMeeting = teamMeetings.find(
     (meeting) => meeting.id === route.id,
   );
@@ -284,6 +301,75 @@ export default function App() {
     );
     return () => window.clearTimeout(timer);
   }, [analyzing]);
+
+   // 활성 팀이 바뀌면 현재 유효한 결정과 변경 이력을 Supabase에서 불러온다.
+  useEffect(() => {
+    if (!hasTeam) {
+      setDecisions([]);
+      setHistory([]);
+      return;
+    }
+    let cancelled = false;
+    fetchTeamDecisions(activeTeam.id)
+      .then((rows) => {
+        if (!cancelled) setDecisions(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setDecisions([]);
+      });
+    fetchTeamHistory(activeTeam.id)
+      .then((rows) => {
+        if (!cancelled) setHistory(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setHistory([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTeam.id, hasTeam]);
+
+  // 활성 팀이 바뀌면 회의록 목록을 Supabase에서 불러온다.
+  useEffect(() => {
+    if (!hasTeam) {
+      setMeetings([]);
+      return;
+    }
+    let cancelled = false;
+    setMeetingsLoading(true);
+    fetchTeamMeetings(activeTeam.id)
+      .then((rows) => {
+        if (!cancelled) setMeetings(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setMeetings([]);
+      })
+      .finally(() => {
+        if (!cancelled) setMeetingsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTeam.id, hasTeam]);
+
+  // 목록에선 문단·결정이 비어 있으므로, 상세 진입 시 전체 행을 다시 불러온다.
+  useEffect(() => {
+    if (route.page !== "meeting" && route.page !== "review") return;
+    if (!currentMeeting || currentMeeting.example) return;
+    if (currentMeeting.paragraphs.length > 0) return;
+    let cancelled = false;
+    fetchMeetingRemote(activeTeam.id, currentMeeting.id)
+      .then((m) => {
+        if (!cancelled && m) updateMeeting(currentMeeting.id, () => m);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.page, route.id, activeTeam.id]);
 
   function go(page: Page, id?: string) {
     setDialog(null);
@@ -398,33 +484,95 @@ export default function App() {
     };
     setMeetings((items) => [meeting, ...items]);
     go(draft.analysis || draft.example ? "review" : "meeting", id);
-    setToast(
+setToast(
       draft.example
         ? "예시 분석 흐름을 시작했습니다."
         : draft.analysis
           ? `AI 분석이 완료됐습니다. ${candidates.length}개 항목을 검토해 주세요.`
           : "텍스트 추출이 완료되었습니다. 원문 탭에서 페이지·문단별 내용을 확인하세요.",
     );
+
+    if (!draft.example && user) {
+      void saveMeetingToSupabase(meeting, draft, user.id, activeTeam.members)
+        .then((savedIds) => {
+          // 화면 후보의 임시 id를 DB candidate_id로 교체 →
+          // 검토·처리 화면의 수정/처리가 DB 행과 바로 연결된다.
+          if (savedIds && savedIds.length > 0) {
+            setMeetings((items) =>
+              items.map((item) =>
+                item.id === meeting.id
+                  ? {
+                      ...item,
+                      candidates: item.candidates.map((c, index) =>
+                        savedIds[index] ? { ...c, id: savedIds[index] } : c,
+                      ),
+                    }
+                  : item,
+              ),
+            );
+          }
+          setToast("회의록이 서버에 저장됐습니다.");
+        })
+        .catch((err: unknown) =>
+          setToast(
+            err instanceof Error
+              ? `서버 저장 실패: ${err.message}`
+              : "서버 저장에 실패했습니다.",
+          ),
+        );
+    }
   }
-  function submitReview(meeting: Meeting) {
-    if (meeting.status !== "review") return;
-    const hasConfirmed = meeting.candidates.some(
-      (candidate) => candidate.confirmed,
-    );
-    updateMeeting(meeting.id, (item) => ({
-      ...item,
-      status: hasConfirmed ? "submitted" : "done",
-    }));
-    recordNotice(
-      hasConfirmed
-        ? "검토 제출 완료 · 확정 항목을 관리자 확인 대상으로 전달했습니다."
-        : "검토 제출 완료 · 제안·논의 사항만 기록했습니다.",
-    );
-    go(
-      role === "admin" && hasConfirmed ? "decisions" : "meeting",
-      role === "admin" && hasConfirmed ? undefined : meeting.id,
-    );
+    function submitReview(meeting: Meeting) {
+      if (meeting.status !== "review") return;
+      const hasConfirmed = meeting.candidates.some(
+        (candidate) => candidate.confirmed,
+      );
+      const nextStatus: Meeting["status"] = hasConfirmed
+        ? "submitted"
+        : "done";
+      updateMeeting(meeting.id, (item) => ({
+        ...item,
+        status: nextStatus,
+      }));
+      // 검토 제출 상태를 DB에도 저장 (예시 회의록 제외)
+      if (!meeting.example) {
+        void updateMeetingStatus(meeting.id, nextStatus).catch(() => {
+          setToast("제출 상태를 서버에 저장하지 못했습니다. 다시 시도해 주세요.");
+        });
+      }
+      recordNotice(
+        hasConfirmed
+          ? "검토 제출 완료 · 확정 항목을 관리자 확인 대상으로 전달했습니다."
+          : "검토 제출 완료 · 제안·논의 사항만 기록했습니다.",
+      );
+      go(
+        role === "admin" && hasConfirmed ? "decisions" : "meeting",
+        role === "admin" && hasConfirmed ? undefined : meeting.id,
+      );
+    }
+
+    async function handleDeleteMeeting(meeting: Meeting) {
+    if (!hasTeam) return;
+    // 예시 회의록은 DB 삭제 없이 로컬만 제거
+    if (!meeting.example) {
+      try {
+        await deleteMeeting(meeting.id);  // meetings.ts에 이미 있음 (소프트 삭제)
+      } catch (err: unknown) {
+        setToast(
+          err instanceof Error
+            ? `삭제 실패: ${err.message}`
+            : "회의록 삭제에 실패했습니다.",
+        );
+        return;
+      }
+    }
+    // 로컬 메모리 URL 해제 + 상태에서 제거
+    releaseUrl(meeting.fileUrl);
+    setMeetings((items) => items.filter((m) => m.id !== meeting.id));
+    setToast("회의록을 삭제했습니다.");
+    go("meetings");
   }
+
   function openResolution(meeting: Meeting, candidate: Candidate) {
     setResolveTarget({ meetingId: meeting.id, candidateId: candidate.id });
     setDialog("resolve");
@@ -519,6 +667,33 @@ export default function App() {
     ]);
     recordNotice(`${resolutionLabels[method]} 처리를 기록했습니다.`);
     setDialog(null);
+    // --- DB 저장: 후보 resolved + 결정 반영 + 변경 이력 + 담당자 알림 ---
+    // (예시 회의록 제외. 성공하면 결정·이력을 서버에서 다시 불러와 화면과 맞춘다.)
+    if (!targetMeeting.example) {
+      void resolveCandidate({
+        candidateId: targetCandidate.id,
+        teamId: activeTeam.id,
+        meetingId: targetMeeting.id,
+        method,
+        reason: reason.trim(),
+        actorId: user.id,
+      })
+        .then(async () => {
+          const [freshDecisions, freshHistory] = await Promise.all([
+            fetchTeamDecisions(activeTeam.id),
+            fetchTeamHistory(activeTeam.id),
+          ]);
+          setDecisions(freshDecisions);
+          setHistory(freshHistory);
+        })
+        .catch((err: unknown) =>
+          setToast(
+            err instanceof Error
+              ? `처리 결과 저장 실패: ${err.message}`
+              : "처리 결과 저장에 실패했습니다.",
+          ),
+        );
+    }
   }
   async function createTeam(event: FormEvent) {
     event.preventDefault();
@@ -1185,7 +1360,13 @@ export default function App() {
               />
             )}
             {route.page === "meetings" && (
-              <MeetingList meetings={teamMeetings} go={go} />
+              meetingsLoading ? (
+                <section className="card">
+                  <p className="muted">회의록을 불러오는 중…</p>
+                </section>
+              ) : (
+                <MeetingList meetings={teamMeetings} go={go} />
+              )
             )}
             {route.page === "upload" && (
               <UploadPage onSave={saveDraft} onCancel={() => go("meetings")} />
@@ -1198,6 +1379,7 @@ export default function App() {
                 initialTab={route.tab}
                 go={go}
                 onSource={setSource}
+                onDelete={handleDeleteMeeting}
                 onAddPhotos={(files) => {
                   const photos = files.map(makePhoto);
                   updateMeeting(currentMeeting.id, (meeting) => ({
@@ -1233,22 +1415,37 @@ export default function App() {
                 members={activeTeam.members}
                 go={go}
                 onSource={setSource}
+                onSubmit={() => submitReview(currentMeeting)}
+                onStatus={(status) => {
+                  updateMeeting(currentMeeting.id, (meeting) => ({
+                    ...meeting,
+                    status,
+                  }));
+                  if (!currentMeeting.example) {
+                    void updateMeetingStatus(currentMeeting.id, status).catch(() => {
+                      setToast("상태 변경을 서버에 저장하지 못했습니다.");
+                    });
+                  }
+                }}
                 onEdit={(candidate) => {
-                  if (currentMeeting.status === "review")
+                  if (currentMeeting.status === "review") {
                     updateMeeting(currentMeeting.id, (meeting) => ({
                       ...meeting,
                       candidates: meeting.candidates.map((item) =>
                         item.id === candidate.id ? candidate : item,
                       ),
                     }));
-                }}
-                onSubmit={() => submitReview(currentMeeting)}
-                onStatus={(status) => {
-                  if (currentMeeting.example)
-                    updateMeeting(currentMeeting.id, (meeting) => ({
-                      ...meeting,
-                      status,
-                    }));
+                    if (!currentMeeting.example) {
+                      void updateConflictCandidate(candidate.id, {
+                        decisionText: candidate.title,
+                        assigneeName: candidate.owner || null,
+                        dueDate: candidate.dueDate || null,
+                        status: candidate.confirmed ? "confirmed" : "pending",
+                      }).catch(() => {
+                        setToast("후보 수정을 서버에 저장하지 못했습니다.");
+                      });
+                    }
+                  }
                 }}
               />
             )}

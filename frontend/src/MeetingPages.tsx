@@ -489,6 +489,7 @@ export function MeetingDetail({
   initialTab,
   go,
   onSource,
+  onDelete,
   onAddPhotos,
   onPhotoChange,
   onPhotoDelete,
@@ -498,6 +499,7 @@ export function MeetingDetail({
   initialTab?: string;
   go: Navigate;
   onSource: (source: Evidence) => void;
+  onDelete: (meeting: Meeting) => void;
   onAddPhotos: (files: File[]) => void;
   onPhotoChange: (photo: MeetingPhoto) => void;
   onPhotoDelete: (id: string) => void;
@@ -578,6 +580,18 @@ export function MeetingDetail({
             >
               결정 처리 현황 보기
             </button>
+            {!meeting.example && (
+              <button
+                className="button button-secondary"
+                onClick={() => {
+                  if (window.confirm(`회의록 "${meeting.title}"을 삭제할까요?`)) {
+                    onDelete(meeting);
+                  }
+                }}
+              >
+                삭제
+              </button>
+            )}
           </div>
         </section>
       )}
