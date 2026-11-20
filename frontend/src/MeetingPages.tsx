@@ -9,6 +9,7 @@ import type {
   MeetingPhoto,
   Member,
   Navigate,
+  Project,
   Task,
 } from "./demo-data";
 import MeetingPhotos from "./MeetingPhotos";
@@ -597,6 +598,8 @@ export function MeetingDetail({
 export function ReviewPage({
   meeting,
   members,
+  projects,
+  onCreateProject,
   go,
   onSource,
   onEdit,
@@ -607,12 +610,20 @@ export function ReviewPage({
   members: Member[];
   go: Navigate;
   onSource: (source: Evidence) => void;
+  projects: Project[];
+  onCreateProject: (name: string) => void;
   onEdit: (candidate: Candidate) => void;
   onSubmit: () => void;
   onStatus: (status: Meeting["status"]) => void;
 }) {
   const locked = meeting.status === "submitted" || meeting.status === "done";
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const hasUnclassified = meeting.candidates.some(
+    (candidate) =>
+      candidate.confirmed &&
+      !projects.some((project) => project.id === candidate.projectId),
+  );
   return (
     <>
       <button className="back-link" onClick={() => go("meeting", meeting.id)}>
@@ -680,6 +691,40 @@ export function ReviewPage({
               ? "검토 제출이 완료되었습니다. 현재 유효한 결정은 관리자 처리 이후 갱신됩니다."
               : "AI가 추출한 내용을 원문과 대조해 검토해 주세요."}
           </div>
+          {!locked && meeting.candidates.length > 0 && (
+            <section className="card stack">
+              <h2>프로젝트 분류</h2>
+              <p className="muted">
+                한 회의록에 여러 주제가 있으면 결정마다 프로젝트를 다르게 선택하세요.
+                프로젝트와 분류 결과는 현재 브라우저에서만 유지됩니다.
+              </p>
+              <form
+                className="row-actions"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  onCreateProject(projectName);
+                  setProjectName("");
+                }}
+              >
+                <label className="field">
+                  <span>새 프로젝트 이름</span>
+                  <input
+                    value={projectName}
+                    maxLength={100}
+                    onChange={(event) => setProjectName(event.target.value)}
+                    placeholder="예: 11월 프로모션"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="button button-secondary"
+                  disabled={!projectName.trim()}
+                >
+                  프로젝트 추가
+                </button>
+              </form>
+            </section>
+          )}
           {meeting.candidates.length === 0 && (
             <EmptyState
               title="추출된 결정 사항이 없습니다"
@@ -717,6 +762,24 @@ export function ReviewPage({
                       onEdit({ ...candidate, title: event.target.value })
                     }
                   />
+                </div>
+                <div className="field">
+                  <label htmlFor={`project-${candidate.id}`}>프로젝트</label>
+                  <select
+                    id={`project-${candidate.id}`}
+                    disabled={locked}
+                    value={candidate.projectId ?? ""}
+                    onChange={(event) =>
+                      onEdit({ ...candidate, projectId: event.target.value })
+                    }
+                  >
+                    <option value="">미분류 — 프로젝트를 선택하세요</option>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="candidate-fields">
                   <div className="field">
@@ -773,6 +836,11 @@ export function ReviewPage({
               </section>
             ))}
           </div>
+          {!locked && hasUnclassified && (
+            <p className="error-message">
+              회의에서 확정한 항목은 프로젝트를 모두 선택해야 제출할 수 있습니다.
+            </p>
+          )}
           <div className="review-footer">
             <p className="muted">
               확정 항목{" "}
@@ -780,7 +848,7 @@ export function ReviewPage({
                 meeting.candidates.filter((candidate) => candidate.confirmed)
                   .length
               }
-              개만 기존 결정과 비교합니다.
+              개의 프로젝트 분류를 확인해 제출합니다.
             </p>
             <div className="row-actions">
               <button
@@ -799,9 +867,10 @@ export function ReviewPage({
               ) : (
                 <button
                   className="button button-primary"
-                  disabled={meeting.candidates.some(
-                    (candidate) => !candidate.title.trim(),
-                  )}
+                  disabled={
+                    hasUnclassified ||
+                    meeting.candidates.some((candidate) => !candidate.title.trim())
+                  }
                   onClick={() => setConfirmOpen(true)}
                 >
                   검토 결과 제출

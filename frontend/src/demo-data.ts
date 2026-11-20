@@ -30,8 +30,15 @@ export type Evidence = {
   endOffset: number | null;
   quote: string;
 };
+export type Project = {
+  id: string;
+  teamId: string;
+  name: string;
+};
+
 export type Candidate = {
   id: string;
+  projectId?: string;
   title: string;
   owner: string;
   dueDate: string;
@@ -86,6 +93,7 @@ export type Team = {
 };
 export type Decision = {
   id: string;
+  projectId?: string;
   teamId: string;
   title: string;
   owner: string;

@@ -37,6 +37,7 @@ import type {
   MeetingPhoto,
   Member,
   Page,
+  Project,
   Resolution,
   Task,
   Team,
@@ -127,6 +128,8 @@ export default function App() {
     PendingInvitation[]
   >([]);
   const [invitationsLoading, setInvitationsLoading] = useState(false);
+  // 프로젝트도 현재 회의록처럼 새로고침 전까지만 보관한다.
+  const [projects, setProjects] = useState<Project[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>(initialMeetings);
   const [decisions, setDecisions] = useState<Decision[]>(initialDecisions);
   const [history, setHistory] = useState<ChangeRecord[]>([]);
@@ -219,6 +222,9 @@ export default function App() {
   );
   const teamDecisions = decisions.filter(
     (decision) => decision.teamId === activeTeam.id,
+  );
+  const teamProjects = projects.filter(
+    (project) => project.teamId === activeTeam.id,
   );
   const teamTasks = tasks.filter((task) => task.teamId === activeTeam.id);
   const teamHistory = history.filter(
@@ -328,6 +334,22 @@ export default function App() {
     URL.revokeObjectURL(url);
     urls.current = urls.current.filter((item) => item !== url);
   }
+  function createProject(name: string) {
+    const projectName = name.trim();
+    if (!user || !hasTeam || !projectName) return;
+
+    if (teamProjects.some((project) => project.name === projectName)) {
+      setToast("현재 팀에 같은 이름의 프로젝트가 있습니다.");
+      return;
+    }
+
+    setProjects((items) => [
+      ...items,
+      { id: crypto.randomUUID(), teamId: activeTeam.id, name: projectName },
+    ]);
+    setToast("프로젝트를 추가했습니다.");
+  }
+
   function updateMeeting(id: string, update: (meeting: Meeting) => Meeting) {
     if (!hasTeam) return;
     setMeetings((items) =>
@@ -415,6 +437,17 @@ export default function App() {
   }
   function submitReview(meeting: Meeting) {
     if (meeting.status !== "review") return;
+
+    // 확정한 결정은 현재 팀의 프로젝트를 선택해야 제출할 수 있다.
+    const hasUnclassified = meeting.candidates.some(
+      (candidate) =>
+        candidate.confirmed &&
+        !teamProjects.some((project) => project.id === candidate.projectId),
+    );
+    if (hasUnclassified) {
+      setToast("확정 항목의 프로젝트를 모두 선택해 주세요.");
+      return;
+    }
     const hasConfirmed = meeting.candidates.some(
       (candidate) => candidate.confirmed,
     );
@@ -458,6 +491,7 @@ export default function App() {
           : crypto.randomUUID(),
       teamId: activeTeam.id,
       title: targetCandidate.title,
+      projectId: targetCandidate.projectId,
       owner: targetCandidate.owner,
       dueDate: targetCandidate.dueDate,
       evidence: targetCandidate.evidence,
@@ -836,6 +870,11 @@ export default function App() {
         <ResolveDialog
           key={targetCandidate.id}
           candidate={targetCandidate}
+          projectName={
+            teamProjects.find(
+              (project) => project.id === targetCandidate.projectId,
+            )?.name ?? "미분류"
+          }
           previous={
             targetCandidate.kind === "change"
               ? teamDecisions.find(
@@ -1239,6 +1278,8 @@ export default function App() {
                 key={currentMeeting.id}
                 meeting={currentMeeting}
                 members={activeTeam.members}
+                projects={teamProjects}
+                onCreateProject={createProject}
                 go={go}
                 onSource={setSource}
                 onEdit={(candidate) => {
@@ -1279,6 +1320,7 @@ export default function App() {
                 key={`${activeTeam.id}-${role}`}
                 meetings={teamMeetings}
                 decisions={teamDecisions}
+                projects={teamProjects}
                 history={teamHistory}
                 role={role}
                 go={go}
@@ -1471,6 +1513,7 @@ export default function App() {
 
 function ResolveDialog({
   candidate,
+  projectName,
   previous,
   admin,
   onSource,
@@ -1478,6 +1521,7 @@ function ResolveDialog({
   onClose,
 }: {
   candidate: Candidate;
+  projectName: string;
   previous?: Decision;
   admin: boolean;
   onSource: (source: Evidence) => void;
@@ -1522,6 +1566,7 @@ function ResolveDialog({
           <section className="comparison-card comparison-new">
             <span className="badge">새 결정 후보</span>
             <h3>{candidate.title}</h3>
+            <p className="small muted">프로젝트: {projectName}</p>
             <p className="muted">
               {candidate.owner || "담당자 미확인"} ·{" "}
               {candidate.dueDate || "기한 미확인"}

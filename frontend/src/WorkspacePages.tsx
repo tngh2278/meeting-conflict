@@ -9,6 +9,7 @@ import type {
   Meeting,
   Member,
   Navigate,
+  Project,
   Role,
   Task,
   Team,
@@ -20,6 +21,7 @@ import { searchUserByEmail, type UserSearchResult } from "./lib/teams";
 export function DecisionsPage({
   meetings,
   decisions,
+  projects,
   history,
   role,
   go,
@@ -28,6 +30,7 @@ export function DecisionsPage({
 }: {
   meetings: Meeting[];
   decisions: Decision[];
+  projects: Project[];
   history: ChangeRecord[];
   role: Role;
   go: Navigate;
@@ -35,6 +38,8 @@ export function DecisionsPage({
   onResolve: (meeting: Meeting, candidate: Candidate) => void;
 }) {
   const [tab, setTab] = useState(role === "admin" ? "pending" : "current");
+  const projectName = (id: string | undefined) =>
+    projects.find((project) => project.id === id)?.name ?? "미분류";
   const pending = meetings.flatMap((meeting) =>
     meeting.status === "submitted"
       ? meeting.candidates
@@ -106,6 +111,7 @@ export function DecisionsPage({
                   </span>
                 </div>
                 <h2>{candidate.title}</h2>
+                <p className="small muted">프로젝트: {projectName(candidate.projectId)}</p>
                 <p className="muted">
                   {candidate.kind === "change"
                     ? "기존 18:00 → 신규 20:00 · 같은 행사와 같은 날짜의 마감 변경"
@@ -159,6 +165,7 @@ export function DecisionsPage({
                   {decision.exception ? "예외 적용" : "유효"}
                 </span>
                 <h3>{decision.title}</h3>
+                <p className="small muted">프로젝트: {projectName(decision.projectId)}</p>
                 <p className="small muted">
                   {decision.owner || "담당자 미확인"} ·{" "}
                   {decision.dueDate || "기한 미확인"}
