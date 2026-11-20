@@ -103,8 +103,8 @@ export function DecisionsPage({
                     className={`badge ${candidate.kind === "change" ? "badge-amber" : ""}`}
                   >
                     {candidate.kind === "change"
-                      ? "명시적 변경 후보"
-                      : "신규 결정 후보"}
+                      ? "변경 검토 후보"
+                      : "결정 후보"}
                   </span>
                   <span className="small muted">
                     {meeting.date} · {meeting.title}
@@ -113,9 +113,7 @@ export function DecisionsPage({
                 <h2>{candidate.title}</h2>
                 <p className="small muted">프로젝트: {projectName(candidate.projectId)}</p>
                 <p className="muted">
-                  {candidate.kind === "change"
-                    ? "기존 18:00 → 신규 20:00 · 같은 행사와 같은 날짜의 마감 변경"
-                    : `${candidate.owner || "담당자 미확인"} · ${candidate.dueDate || "기한 미확인"}`}
+                  {candidate.owner || "담당자 미확인"} · {candidate.dueDate || "기한 미확인"}
                 </p>
                 <div className="row-actions">
                   <button
