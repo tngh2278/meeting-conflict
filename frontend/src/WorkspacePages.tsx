@@ -560,7 +560,7 @@ export function TeamPage({
             <thead>
               <tr>
                 <th>팀원</th>
-                <th>사용자 ID</th>
+                <th>이메일</th>
                 <th>역할</th>
                 {role === "admin" && <th> </th>}
               </tr>
@@ -579,7 +579,9 @@ export function TeamPage({
                   </td>
                   <td>
                     <code className="small muted">
-                      {member.id.slice(0, 8)}…
+                      <span className="small muted">
+                        {member.email || "이메일 확인 불가"}
+                      </span>
                     </code>
                   </td>
                   <td>
@@ -621,14 +623,16 @@ export function TeamPage({
           <div className="subtle-panel stack">
             <div className="row-between">
               <h3>초대 대기중</h3>
-              <span className="small muted">수락 전까지 정식 팀원이 아닙니다</span>
+              <span className="small muted">
+                수락 전까지 정식 팀원이 아닙니다
+              </span>
             </div>
             <div className="table-scroll">
               <table>
                 <thead>
                   <tr>
                     <th>초대한 사용자</th>
-                    <th>사용자 ID</th>
+                    <th>이메일</th>
                     <th>상태</th>
                   </tr>
                 </thead>
@@ -643,7 +647,9 @@ export function TeamPage({
                       </td>
                       <td>
                         <code className="small muted">
-                          {member.id.slice(0, 8)}…
+                          <span className="small muted">
+                            {member.email || "이메일 확인 불가"}
+                          </span>
                         </code>
                       </td>
                       <td>
@@ -670,8 +676,8 @@ export function TeamPage({
           <div>
             <span className="badge">관리자</span>
             <p>
-              일반 팀원 기능 + 팀원 초대·권한 변경·팀원 제거 + 충돌 처리·최종 결정
-              반영
+              일반 팀원 기능 + 팀원 초대·권한 변경·팀원 제거 + 충돌 처리·최종
+              결정 반영
             </p>
           </div>
         </div>
@@ -709,16 +715,16 @@ export function TeamPage({
               </p>
             )}
             {!hasSearched && email.trim() && !searching && (
-              <p className="small muted">
-                검색 버튼을 눌러 가입자를 찾습니다.
-              </p>
+              <p className="small muted">검색 버튼을 눌러 가입자를 찾습니다.</p>
             )}
             {result && (
               <div className="subtle-panel stack">
                 <strong>{result.name}</strong>
                 <p className="small muted">{result.email}</p>
                 {isAlreadyMember ? (
-                  <p className="muted">이미 이 팀에 소속되었거나 초대 대기 중인 사용자입니다.</p>
+                  <p className="muted">
+                    이미 이 팀에 소속되었거나 초대 대기 중인 사용자입니다.
+                  </p>
                 ) : (
                   <button
                     className="button button-primary"
@@ -746,17 +752,14 @@ export function TeamPage({
         </Modal>
       )}
       {removingId && (
-        <Modal
-          title="팀원을 제거할까요?"
-          onClose={() => setRemovingId(null)}
-        >
+        <Modal title="팀원을 제거할까요?" onClose={() => setRemovingId(null)}>
           <div className="stack">
             <p>
               <strong>
                 {team.members.find((member) => member.id === removingId)?.name}
               </strong>
-              님을 이 팀에서 제거합니다. 제거된 사용자는 이 팀의 회의록·결정·업무에
-              더 이상 접근할 수 없습니다.
+              님을 이 팀에서 제거합니다. 제거된 사용자는 이 팀의
+              회의록·결정·업무에 더 이상 접근할 수 없습니다.
             </p>
             <div className="row-actions">
               <button
@@ -782,15 +785,16 @@ export function TeamPage({
         <Modal title="팀에서 나갈까요?" onClose={() => setLeaving(false)}>
           <div className="stack">
             <p>
-              <strong>{team.name}</strong> 팀에서 나갑니다. 이 팀의 회의록·결정·업무
-              데이터는 팀에 남아 있으며, 다시 초대받아 수락해야 볼 수 있습니다.
+              <strong>{team.name}</strong> 팀에서 나갑니다. 이 팀의
+              회의록·결정·업무 데이터는 팀에 남아 있으며, 다시 초대받아 수락해야
+              볼 수 있습니다.
             </p>
             {role === "admin" &&
               team.members.filter((member) => member.role === "admin")
                 .length === 1 && (
                 <p className="notice-message">
-                  현재 회원님이 이 팀의 유일한 관리자입니다. 다른 팀원을 관리자로
-                  지정한 뒤 나가거나, 팀을 삭제해야 합니다.
+                  현재 회원님이 이 팀의 유일한 관리자입니다. 다른 팀원을
+                  관리자로 지정한 뒤 나가거나, 팀을 삭제해야 합니다.
                 </p>
               )}
             <div className="row-actions">

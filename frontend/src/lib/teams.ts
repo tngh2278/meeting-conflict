@@ -9,38 +9,38 @@ import type { Member, Role, Team } from "../demo-data";
 // 프론트 타입: Role = 'admin' | 'member'
 // DECIDER는 현재 UI에서 다루지 않으므로 member로 매핑.
 function dbRoleToFrontend(role: string): Role {
-    if (role === "ADMIN") return "admin";
-    return "member"; // MEMBER, DECIDER 모두 member 취급
+  if (role === "ADMIN") return "admin";
+  return "member"; // MEMBER, DECIDER 모두 member 취급
 }
 
 function frontendRoleToDb(role: Role): "ADMIN" | "MEMBER" {
-    return role === "admin" ? "ADMIN" : "MEMBER";
+  return role === "admin" ? "ADMIN" : "MEMBER";
 }
 
 // DB에서 가져온 team_members + users 조인 결과를 프론트 Member 타입으로 변환
 interface RawMemberRow {
-    team_member_id: string;
-    user_id: string;
-    role: string;
-    status: string;
-    users: { name: string | null; profile_image_url: string | null } | null;
+  team_member_id: string;
+  user_id: string;
+  role: string;
+  status: string;
+  users: { name: string | null; profile_image_url: string | null } | null;
 }
 
-function toMember(row: RawMemberRow): Member {
-    return {
-        id: row.user_id,
-        name: row.users?.name ?? "알 수 없음",
-        email: "", // team_members JOIN users 결과에는 email이 없음. 별도 조회 필요시 fetchUserEmail 사용
-        role: dbRoleToFrontend(row.role),
-    };
+function toMember(row: RawMemberRow, email: string): Member {
+  return {
+    id: row.user_id,
+    name: row.users?.name ?? "알 수 없음",
+    email,
+    role: dbRoleToFrontend(row.role),
+  };
 }
 
 // DB에서 가져온 teams + team_members 조인 결과를 프론트 Team 타입으로 변환
 interface TeamWithMembers {
-    team_id: string;
-    name: string;
-    description: string | null;
-    creator_id: string;
+  team_id: string;
+  name: string;
+  description: string | null;
+  creator_id: string;
 }
 
 // ==========================================================================
@@ -52,58 +52,86 @@ interface TeamWithMembers {
 // 반환: Team[] (각 팀의 members: 정식 팀원, pendingMembers: 초대 대기중)
 // ==========================================================================
 export async function fetchMyTeams(): Promise<Team[]> {
-    // 1) 내가 속한 팀 목록 조회 (RLS: ACCEPTED 팀 + 내 PENDING/DECLINED 줄)
-    const { data: myMemberships, error: e1 } = await supabase
-        .from("team_members")
-        .select("team_id, status");
-    if (e1) throw e1;
-    if (!myMemberships || myMemberships.length === 0) return [];
+  // 1) 내가 속한 팀 목록 조회 (RLS: ACCEPTED 팀 + 내 PENDING/DECLINED 줄)
+  const { data: myMemberships, error: e1 } = await supabase
+    .from("team_members")
+    .select("team_id, status");
+  if (e1) throw Error("팀 소속 조회 실패 : " + e1.code + " / " + e1.message);
+  if (!myMemberships || myMemberships.length === 0) return [];
 
-    // ACCEPTED 상태인 팀만 정식 팀 목록에 포함
-    const teamIds = myMemberships
-        .filter((m) => m.status === "ACCEPTED")
-        .map((m) => m.team_id as string);
-    if (teamIds.length === 0) return [];
+  // ACCEPTED 상태인 팀만 정식 팀 목록에 포함
+  const teamIds = myMemberships
+    .filter((m) => m.status === "ACCEPTED")
+    .map((m) => m.team_id as string);
+  if (teamIds.length === 0) return [];
 
-    // 2) 해당 팀들의 메타 정보
-    const { data: teams, error: e2 } = await supabase
-        .from("teams")
-        .select("team_id, name, description, creator_id")
-        .in("team_id", teamIds);
-    if (e2) throw e2;
-    if (!teams) return [];
+  // 2) 해당 팀들의 메타 정보
+  const { data: teams, error: e2 } = await supabase
+    .from("teams")
+    .select("team_id, name, description, creator_id")
+    .in("team_id", teamIds);
+  if (e2) throw Error("팀 정보 조회 실패 : " + e2.code + " / " + e2.message);
+  if (!teams) return [];
 
-    // 3) 각 팀의 멤버 전체 조회 (같은 팀 멤버끼리만 RLS 허용)
-    //    status 컬럼까지 가져와 ACCEPTED/PENDING 을 나눔.
-    const { data: allMembers, error: e3 } = await supabase
-        .from("team_members")
-        .select(`
+  // 3) 각 팀의 멤버 전체 조회 (같은 팀 멤버끼리만 RLS 허용)
+  //    status 컬럼까지 가져와 ACCEPTED/PENDING 을 나눔.
+  const { data: allMembers, error: e3 } = await supabase
+    .from("team_members")
+    .select(
+      `
             team_member_id,
             team_id,
             user_id,
             role,
             status,
             users:user_id ( name, profile_image_url )
-        `)
-        .in("team_id", teamIds);
-    if (e3) throw e3;
+        `,
+    )
+    .in("team_id", teamIds);
+  if (e3)
+    throw Error("팀원 프로필 조회 실패 : " + e3.code + " / " + e3.message);
 
-    // 4) 결과 조립 — members(ACCEPTED) / pendingMembers(PENDING)
-    return teams.map((t: TeamWithMembers) => {
-        const rows = (allMembers ?? []).filter((m) => m.team_id === t.team_id);
-        const members = rows
-            .filter((m) => m.status === "ACCEPTED")
-            .map((m) => toMember(m as unknown as RawMemberRow));
-        const pendingMembers = rows
-            .filter((m) => m.status === "PENDING")
-            .map((m) => toMember(m as unknown as RawMemberRow));
-        return {
-            id: t.team_id,
-            name: t.name,
-            members,
-            pendingMembers,
-        };
-    });
+  // 팀원 이메일을 조회한다.
+  const { data: emailRows, error: e4 } = await supabase.rpc(
+    "get_team_member_emails",
+    { target_team_ids: teamIds },
+  );
+  if (e4)
+    throw Error("팀원 이메일 조회 실패 : " + e4.code + " / " + e4.message);
+
+  // 팀 ID와 사용자 ID로 이메일을 찾을 수 있게 보관한다.
+  const emailMap = new Map<string, string>();
+
+  for (const row of emailRows ?? []) {
+    emailMap.set(`${row.team_id}:${row.user_id}`, row.email ?? "");
+  }
+
+  // 4) 결과 조립 — members(ACCEPTED) / pendingMembers(PENDING)
+  return teams.map((t: TeamWithMembers) => {
+    const rows = (allMembers ?? []).filter((m) => m.team_id === t.team_id);
+    const members = rows
+      .filter((m) => m.status === "ACCEPTED")
+      .map((m) =>
+        toMember(
+          m as unknown as RawMemberRow,
+          emailMap.get(`${t.team_id}:${m.user_id}`) ?? "",
+        ),
+      );
+    const pendingMembers = rows
+      .filter((m) => m.status === "PENDING")
+      .map((m) =>
+        toMember(
+          m as unknown as RawMemberRow,
+          emailMap.get(`${t.team_id}:${m.user_id}`) ?? "",
+        ),
+      );
+    return {
+      id: t.team_id,
+      name: t.name,
+      members,
+      pendingMembers,
+    };
+  });
 }
 
 // ==========================================================================
@@ -114,14 +142,17 @@ export async function fetchMyTeams(): Promise<Team[]> {
 //
 // 반환: 새 팀 ID
 // ==========================================================================
-export async function createTeam(name: string, description?: string): Promise<string> {
-    const { data, error } = await supabase.rpc("create_team_with_admin", {
-        team_name: name.trim(),
-        team_description: description?.trim() || null,
-    });
-    if (error) throw error;
-    if (!data) throw new Error("팀 생성 응답이 비어 있습니다.");
-    return data as string;
+export async function createTeam(
+  name: string,
+  description?: string,
+): Promise<string> {
+  const { data, error } = await supabase.rpc("create_team_with_admin", {
+    team_name: name.trim(),
+    team_description: description?.trim() || null,
+  });
+  if (error) throw error;
+  if (!data) throw new Error("팀 생성 응답이 비어 있습니다.");
+  return data as string;
 }
 
 // ==========================================================================
@@ -132,16 +163,16 @@ export async function createTeam(name: string, description?: string): Promise<st
 // RPC(invite_team_member)를 사용: 호출자가 해당 팀의 ACCEPTED ADMIN 인지 서버에서 검증.
 // ==========================================================================
 export async function inviteMember(
-    teamId: string,
-    userId: string,
-    role: Role = "member",
+  teamId: string,
+  userId: string,
+  role: Role = "member",
 ): Promise<void> {
-    const { error } = await supabase.rpc("invite_team_member", {
-        target_team_id: teamId,
-        target_user_id: userId,
-        target_role: frontendRoleToDb(role),
-    });
-    if (error) throw error;
+  const { error } = await supabase.rpc("invite_team_member", {
+    target_team_id: teamId,
+    target_user_id: userId,
+    target_role: frontendRoleToDb(role),
+  });
+  if (error) throw error;
 }
 
 // ==========================================================================
@@ -151,16 +182,16 @@ export async function inviteMember(
 // 초대(수락) 흐름으로 바뀌었으므로 신규 UI에서는 inviteMember() 사용.
 // ==========================================================================
 export async function addMember(
-    teamId: string,
-    userId: string,
-    role: Role = "member",
+  teamId: string,
+  userId: string,
+  role: Role = "member",
 ): Promise<void> {
-    const { error } = await supabase.from("team_members").insert({
-        team_id: teamId,
-        user_id: userId,
-        role: frontendRoleToDb(role),
-    });
-    if (error) throw error;
+  const { error } = await supabase.from("team_members").insert({
+    team_id: teamId,
+    user_id: userId,
+    role: frontendRoleToDb(role),
+  });
+  if (error) throw error;
 }
 
 // ==========================================================================
@@ -171,16 +202,16 @@ export async function addMember(
 // 마지막 ADMIN을 MEMBER로 강등하는 것은 애플리케이션 단에서 차단 (Supabase는 모름).
 // ==========================================================================
 export async function changeMemberRole(
-    teamId: string,
-    userId: string,
-    nextRole: Role,
+  teamId: string,
+  userId: string,
+  nextRole: Role,
 ): Promise<void> {
-    const { error } = await supabase
-        .from("team_members")
-        .update({ role: frontendRoleToDb(nextRole) })
-        .eq("team_id", teamId)
-        .eq("user_id", userId);
-    if (error) throw error;
+  const { error } = await supabase
+    .from("team_members")
+    .update({ role: frontendRoleToDb(nextRole) })
+    .eq("team_id", teamId)
+    .eq("user_id", userId);
+  if (error) throw error;
 }
 
 // ==========================================================================
@@ -189,17 +220,17 @@ export async function changeMemberRole(
 // 본인이 받은 초대를 수락/거절합니다. RPC(SECURITY DEFINER)로 처리.
 // ==========================================================================
 export async function acceptInvitation(teamId: string): Promise<void> {
-    const { error } = await supabase.rpc("accept_invitation", {
-        target_team_id: teamId,
-    });
-    if (error) throw error;
+  const { error } = await supabase.rpc("accept_invitation", {
+    target_team_id: teamId,
+  });
+  if (error) throw error;
 }
 
 export async function declineInvitation(teamId: string): Promise<void> {
-    const { error } = await supabase.rpc("decline_invitation", {
-        target_team_id: teamId,
-    });
-    if (error) throw error;
+  const { error } = await supabase.rpc("decline_invitation", {
+    target_team_id: teamId,
+  });
+  if (error) throw error;
 }
 
 // ==========================================================================
@@ -208,10 +239,10 @@ export async function declineInvitation(teamId: string): Promise<void> {
 // 본인이 자발적으로 팀에서 탈퇴합니다. 마지막 ADMIN은 탈퇴 불가 (RPC에서 검증).
 // ==========================================================================
 export async function leaveTeam(teamId: string): Promise<void> {
-    const { error } = await supabase.rpc("leave_team", {
-        target_team_id: teamId,
-    });
-    if (error) throw error;
+  const { error } = await supabase.rpc("leave_team", {
+    target_team_id: teamId,
+  });
+  if (error) throw error;
 }
 
 // ==========================================================================
@@ -220,13 +251,16 @@ export async function leaveTeam(teamId: string): Promise<void> {
 // ADMIN이 다른 팀원을 팀에서 제거합니다.
 // RLS 정책: 그 팀의 ADMIN(ACCEPTED)만 호출 가능.
 // ==========================================================================
-export async function removeMember(teamId: string, userId: string): Promise<void> {
-    const { error } = await supabase
-        .from("team_members")
-        .delete()
-        .eq("team_id", teamId)
-        .eq("user_id", userId);
-    if (error) throw error;
+export async function removeMember(
+  teamId: string,
+  userId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("team_members")
+    .delete()
+    .eq("team_id", teamId)
+    .eq("user_id", userId);
+  if (error) throw error;
 }
 
 // ==========================================================================
@@ -238,25 +272,25 @@ export async function removeMember(teamId: string, userId: string): Promise<void
 // 반환: 사용자가 없으면 null
 // ==========================================================================
 export interface UserSearchResult {
-    id: string;
-    name: string;
-    email: string;
+  id: string;
+  name: string;
+  email: string;
 }
 
 export async function searchUserByEmail(
-    email: string,
+  email: string,
 ): Promise<UserSearchResult | null> {
-    const { data, error } = await supabase.rpc("search_user_by_email", {
-        email_input: email.trim().toLowerCase(),
-    });
-    if (error) throw error;
-    if (!data || (Array.isArray(data) && data.length === 0)) return null;
-    const row = Array.isArray(data) ? data[0] : data;
-    return {
-        id: row.user_id,
-        name: row.name ?? row.email?.split("@")[0] ?? "사용자",
-        email: row.email ?? "",
-    };
+  const { data, error } = await supabase.rpc("search_user_by_email", {
+    email_input: email.trim().toLowerCase(),
+  });
+  if (error) throw error;
+  if (!data || (Array.isArray(data) && data.length === 0)) return null;
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    id: row.user_id,
+    name: row.name ?? row.email?.split("@")[0] ?? "사용자",
+    email: row.email ?? "",
+  };
 }
 
 // ==========================================================================
@@ -269,29 +303,35 @@ export async function searchUserByEmail(
 // currentUserId: App 쪽의 user.id (auth.users.id). RLS 와 일치해야 함.
 // ==========================================================================
 export interface PendingInvitation {
-    teamId: string;
-    teamName: string;
-    role: Role;
+  teamId: string;
+  teamName: string;
+  role: Role;
 }
 
 export async function fetchMyPendingInvitations(
-    currentUserId: string,
+  currentUserId: string,
 ): Promise<PendingInvitation[]> {
-    const { data, error } = await supabase
-        .from("team_members")
-        .select(`
+  const { data, error } = await supabase
+    .from("team_members")
+    .select(
+      `
             team_id,
             role,
             teams:team_id ( name )
-        `)
-        .eq("user_id", currentUserId)
-        .eq("status", "PENDING");
-    if (error) throw error;
-    return (data ?? []).map(
-        (row: { team_id: string; role: string; teams: { name: string | null }[] }) => ({
-            teamId: row.team_id,
-            teamName: row.teams?.[0]?.name ?? "알 수 없는 팀",
-            role: dbRoleToFrontend(row.role),
-        }),
-    );
+        `,
+    )
+    .eq("user_id", currentUserId)
+    .eq("status", "PENDING");
+  if (error) throw error;
+  return (data ?? []).map(
+    (row: {
+      team_id: string;
+      role: string;
+      teams: { name: string | null }[];
+    }) => ({
+      teamId: row.team_id,
+      teamName: row.teams?.[0]?.name ?? "알 수 없는 팀",
+      role: dbRoleToFrontend(row.role),
+    }),
+  );
 }
