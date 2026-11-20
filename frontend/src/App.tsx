@@ -491,7 +491,8 @@ export default function App() {
       ? teamDecisions.find(
           (decision) =>
             decision.id === previousDecisionId &&
-            decision.projectId === targetCandidate.projectId,
+            decision.projectId === targetCandidate.projectId &&
+            decision.evidence.documentId !== targetMeeting.id,
         )
       : undefined;
     if (
@@ -895,7 +896,8 @@ export default function App() {
           existing={teamDecisions.filter(
             (decision) =>
               !!targetCandidate.projectId &&
-              decision.projectId === targetCandidate.projectId,
+              decision.projectId === targetCandidate.projectId &&
+              decision.evidence.documentId !== targetMeeting.id,
           )}
           meetings={teamMeetings}
           admin={role === "admin"}
@@ -1552,6 +1554,7 @@ function ResolveDialog({
 }) {
   // 팝업을 열었을 때의 입력으로 비교하고, 재시도할 때만 다시 요청한다.
   const [input] = useState(() => ({ candidate, existing, meetings }));
+  const hasExisting = input.existing.length > 0;
   const [comparison, setComparison] = useState<ComparisonResult | null>(null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
@@ -1560,6 +1563,8 @@ function ResolveDialog({
   const [reason, setReason] = useState("");
 
   useEffect(() => {
+    if (!hasExisting) return;
+
     const request = new AbortController();
     setComparison(null);
     setError("");
@@ -1577,7 +1582,7 @@ function ResolveDialog({
         }
       });
     return () => request.abort();
-  }, [input, attempt]);
+  }, [hasExisting, input, attempt]);
 
   const selectedMatch = comparison?.matches.find(
     (match) => match.decisionId === selectedId,
@@ -1586,11 +1591,17 @@ function ResolveDialog({
     ? input.existing.find((decision) => decision.id === selectedMatch.decisionId)
     : undefined;
   const needsSelection = !!comparison?.matches.length && !previous;
-  const ready = !!comparison && !error && !needsSelection;
+  const ready = !hasExisting || (!!comparison && !error && !needsSelection);
 
   return (
     <Modal
-      title={comparison?.matches.length ? "기존 결정과 새 후보 비교" : "결정 후보 검토"}
+      title={
+        comparison?.matches.length
+          ? "기존 결정과 새 후보 비교"
+          : ready
+            ? "신규 결정 검토"
+            : "결정 후보 검토"
+      }
       wide
       onClose={onClose}
     >
@@ -1604,10 +1615,12 @@ function ResolveDialog({
         }}
       >
         <p className="muted">
-          프로젝트: {projectName} · 현재 유효 결정 {input.existing.length}개를 대상으로 비교합니다.
-          최종 반영 방식은 관리자가 선택합니다.
+          프로젝트: {projectName}
+          {hasExisting
+            ? ` · 다른 회의록의 유효 결정 ${input.existing.length}개와 비교합니다.`
+            : " · 이 프로젝트에 비교할 다른 회의록의 유효 결정이 없습니다."}
         </p>
-        {!comparison && !error && (
+        {hasExisting && !comparison && !error && (
           <p className="notice-message" role="status">
             같은 업무에 대한 기존 결정을 찾고 차이점을 분석하고 있습니다.
           </p>
@@ -1696,7 +1709,11 @@ function ResolveDialog({
                 required
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
-                placeholder="양쪽 원문을 확인하고 처리 사유를 적어 주세요."
+                placeholder={
+                  previous
+                    ? "양쪽 원문을 확인하고 처리 사유를 적어 주세요."
+                    : "새 후보의 원문을 확인하고 반영 사유를 적어 주세요."
+                }
               />
             </label>
             <div className="row-actions">
