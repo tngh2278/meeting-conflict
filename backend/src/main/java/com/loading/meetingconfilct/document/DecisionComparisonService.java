@@ -132,10 +132,10 @@ public class DecisionComparisonService {
                 "generationConfig", Map.of(
                         "responseMimeType", "application/json",
                         "responseJsonSchema", responseSchema,
-                        "thinkingConfig", Map.of("thinkingLevel", "MEDIUM")));
+                        "thinkingConfig", Map.of("thinkingLevel", "MINIMAL")));
         try {
             JsonNode response = gemini.post()
-                    .uri("/v1beta/models/gemini-3.8-flash:generateContent")
+                    .uri("/v1beta/models/gemini-3.1-flash-lite:generateContent")
                     .header("x-goog-api-key", apiKey)
                     .contentType(MediaType.APPLICATION_JSON).body(body)
                     .retrieve().body(JsonNode.class);

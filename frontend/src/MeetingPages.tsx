@@ -352,23 +352,29 @@ function ProjectForm({
   onCreateProject,
   onCreated,
 }: {
-  onCreateProject: (name: string) => string | null;
+  onCreateProject: (name: string) => Promise<string | null>;
   onCreated?: () => void;
 }) {
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   return (
     <form
       className="stack"
-      onSubmit={(event) => {
+      onSubmit={async (event) => {
         event.preventDefault();
-        const message = onCreateProject(name);
-        setError(message);
-        if (message) return;
-
-        setName("");
-        onCreated?.();
+        if (saving) return;
+        setSaving(true);
+        try {
+          const message = await onCreateProject(name);
+          setError(message);
+          if (message) return;
+          setName("");
+          onCreated?.();
+        } finally {
+          setSaving(false);
+        }
       }}
     >
       <div className="row-actions project-form-fields">
@@ -376,6 +382,7 @@ function ProjectForm({
           <span>새 프로젝트 이름</span>
           <input
             value={name}
+            disabled={saving}
             required
             maxLength={100}
             onChange={(event) => {
@@ -388,7 +395,7 @@ function ProjectForm({
         <button
           type="submit"
           className="button button-secondary"
-          disabled={!name.trim()}
+          disabled={saving || !name.trim()}
         >
           프로젝트 추가
         </button>
@@ -405,7 +412,7 @@ export function MeetingList({
 }: {
   meetings: Meeting[];
   go: Navigate;
-  onCreateProject: (name: string) => string | null;
+  onCreateProject: (name: string) => Promise<string | null>;
 }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
@@ -565,6 +572,7 @@ export function MeetingDetail({
   initialTab,
   go,
   onSource,
+  onDelete,
   onAddPhotos,
   onPhotoChange,
   onPhotoDelete,
@@ -574,6 +582,7 @@ export function MeetingDetail({
   initialTab?: string;
   go: Navigate;
   onSource: (source: Evidence) => void;
+  onDelete: (meeting: Meeting) => void;
   onAddPhotos: (files: File[]) => void;
   onPhotoChange: (photo: MeetingPhoto) => void;
   onPhotoDelete: (id: string) => void;
@@ -654,6 +663,18 @@ export function MeetingDetail({
             >
               결정 처리 현황 보기
             </button>
+            {!meeting.example && (
+              <button
+                className="button button-secondary"
+                onClick={() => {
+                  if (window.confirm(`회의록 "${meeting.title}"을 삭제할까요?`)) {
+                    onDelete(meeting);
+                  }
+                }}
+              >
+                삭제
+              </button>
+            )}
           </div>
         </section>
       )}
@@ -678,6 +699,7 @@ export function ReviewPage({
   go,
   onSource,
   onEdit,
+  submitting,
   onSubmit,
   onStatus,
 }: {
@@ -686,9 +708,10 @@ export function ReviewPage({
   go: Navigate;
   onSource: (source: Evidence) => void;
   projects: Project[];
-  onCreateProject: (name: string) => string | null;
+  onCreateProject: (name: string) => Promise<string | null>;
   onEdit: (candidate: Candidate) => void;
-  onSubmit: () => void;
+  submitting: boolean;
+  onSubmit: () => Promise<void>;
   onStatus: (status: Meeting["status"]) => void;
 }) {
   const locked = meeting.status === "submitted" || meeting.status === "done";
@@ -770,7 +793,6 @@ export function ReviewPage({
               <h2>프로젝트 분류</h2>
               <p className="muted">
                 한 회의록에 여러 주제가 있으면 결정마다 프로젝트를 다르게 선택하세요.
-                프로젝트와 분류 결과는 현재 브라우저에서만 유지됩니다.
               </p>
               <ProjectForm onCreateProject={onCreateProject} />
             </section>
@@ -807,7 +829,7 @@ export function ReviewPage({
                   <input
                     id={`title-${candidate.id}`}
                     value={candidate.title}
-                    disabled={locked}
+                    disabled={locked || submitting}
                     onChange={(event) =>
                       onEdit({ ...candidate, title: event.target.value })
                     }
@@ -817,7 +839,7 @@ export function ReviewPage({
                   <label htmlFor={`project-${candidate.id}`}>프로젝트</label>
                   <select
                     id={`project-${candidate.id}`}
-                    disabled={locked}
+                    disabled={locked || submitting}
                     value={candidate.projectId ?? ""}
                     onChange={(event) =>
                       onEdit({ ...candidate, projectId: event.target.value })
@@ -836,7 +858,7 @@ export function ReviewPage({
                     <label htmlFor={`owner-${candidate.id}`}>담당자</label>
                     <select
                       id={`owner-${candidate.id}`}
-                      disabled={locked}
+                      disabled={locked || submitting}
                       value={candidate.owner}
                       onChange={(event) =>
                         onEdit({ ...candidate, owner: event.target.value })
@@ -856,7 +878,7 @@ export function ReviewPage({
                     <input
                       id={`due-${candidate.id}`}
                       type="date"
-                      disabled={locked}
+                      disabled={locked || submitting}
                       value={candidate.dueDate}
                       onChange={(event) =>
                         onEdit({ ...candidate, dueDate: event.target.value })
@@ -869,7 +891,7 @@ export function ReviewPage({
                     </label>
                     <select
                       id={`confirmed-${candidate.id}`}
-                      disabled={locked}
+                      disabled={locked || submitting}
                       value={candidate.confirmed ? "confirmed" : "proposal"}
                       onChange={(event) =>
                         onEdit({
@@ -918,12 +940,12 @@ export function ReviewPage({
                 <button
                   className="button button-primary"
                   disabled={
-                    hasUnclassified ||
+                    submitting || hasUnclassified ||
                     meeting.candidates.some((candidate) => !candidate.title.trim())
                   }
                   onClick={() => setConfirmOpen(true)}
                 >
-                  검토 결과 제출
+                  {submitting ? "저장 중…" : "검토 결과 제출"}
                 </button>
               )}
             </div>
@@ -950,7 +972,7 @@ export function ReviewPage({
                   className="button button-primary"
                   onClick={() => {
                     setConfirmOpen(false);
-                    onSubmit();
+                    void onSubmit();
                   }}
                 >
                   제출 확인

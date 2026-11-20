@@ -11,7 +11,7 @@ function UploadPage({
   onSave,
   onCancel,
 }: {
-  onSave: (draft: UploadDraft) => void;
+  onSave: (draft: UploadDraft) => Promise<void>;
   onCancel: () => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -144,7 +144,7 @@ function UploadPage({
       const analysis = example
         ? undefined
         : await analyzeDocument(selectedFile, request.signal);
-      onSave({
+      await onSave({
         file: selectedFile,
         title: meetingTitle.trim(),
         date: meetingDate,

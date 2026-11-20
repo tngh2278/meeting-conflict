@@ -395,7 +395,7 @@ export function ChatPage({
         meeting.extractedDocument?.pages.flatMap((page) =>
           page.paragraphs.map((paragraph) => ({
             documentId: meeting.id,
-            fileName: meeting.fileName,
+            fileName: meeting.fileName || meeting.title,
             pageNumber: page.pageNumber,
             paragraphNumber: paragraph.paragraphNumber,
             text: paragraph.text,
