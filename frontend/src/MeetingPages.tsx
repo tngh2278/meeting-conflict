@@ -371,7 +371,7 @@ function ProjectForm({
         onCreated?.();
       }}
     >
-      <div className="row-actions">
+      <div className="row-actions project-form-fields">
         <label className="field">
           <span>새 프로젝트 이름</span>
           <input

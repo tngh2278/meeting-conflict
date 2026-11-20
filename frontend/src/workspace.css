@@ -78,6 +78,17 @@ select:disabled {
 .row-between {
   justify-content: space-between;
 }
+.project-form-fields {
+  align-items: flex-end;
+  justify-content: flex-end;
+}
+.project-form-fields > .field {
+  flex: 1 1 180px;
+}
+.project-form-fields > .button {
+  min-height: 48px;
+  flex-shrink: 0;
+}
 .stack {
   display: flex;
   flex-direction: column;
