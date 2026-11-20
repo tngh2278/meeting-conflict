@@ -132,14 +132,15 @@ public class DecisionComparisonService {
                 "generationConfig", Map.of(
                         "responseMimeType", "application/json",
                         "responseJsonSchema", responseSchema,
-                        "thinkingConfig", Map.of("thinkingLevel", "MEDIUM")));
+                        "thinkingConfig", Map.of("thinkingLevel", "MIDEUM")));
         try {
             JsonNode response = gemini.post()
-                    .uri("/v1beta/models/gemini-3.8-flash:generateContent")
+                    .uri("/v1beta/models/gemini-3.1-flash-lite:generateContent")
                     .header("x-goog-api-key", apiKey)
                     .contentType(MediaType.APPLICATION_JSON).body(body)
                     .retrieve().body(JsonNode.class);
-            if (response == null) throw invalidResponse();
+            if (response == null)
+                throw invalidResponse();
             JsonNode candidate = response.path("candidates").path(0);
             if (!"STOP".equals(candidate.path("finishReason").asString(""))) {
                 throw invalidResponse();
@@ -180,10 +181,20 @@ public class DecisionComparisonService {
                 "Gemini 결정 비교 결과를 확인할 수 없습니다.");
     }
 
-    public record Request(String projectId, Item candidate, List<Item> existing) {}
+    public record Request(String projectId, Item candidate, List<Item> existing) {
+    }
+
     public record Item(String id, String projectId, String title,
-            String owner, String dueDate, String text, boolean exception) {}
-    public enum Relation { DUPLICATE, CONFLICT, CHANGE, REVIEW }
-    public record Match(String decisionId, Relation relation, String reason) {}
-    public record Result(String reason, List<Match> matches) {}
+            String owner, String dueDate, String text, boolean exception) {
+    }
+
+    public enum Relation {
+        DUPLICATE, CONFLICT, CHANGE, REVIEW
+    }
+
+    public record Match(String decisionId, Relation relation, String reason) {
+    }
+
+    public record Result(String reason, List<Match> matches) {
+    }
 }
