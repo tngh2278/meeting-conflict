@@ -330,6 +330,30 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTeam.id, hasTeam]);
 
+  // 활성 팀이 바뀌면 회의록 목록을 Supabase에서 불러온다.
+  useEffect(() => {
+    if (!hasTeam) {
+      setMeetings([]);
+      return;
+    }
+    let cancelled = false;
+    setMeetingsLoading(true);
+    fetchTeamMeetings(activeTeam.id)
+      .then((rows) => {
+        if (!cancelled) setMeetings(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setMeetings([]);
+      })
+      .finally(() => {
+        if (!cancelled) setMeetingsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTeam.id, hasTeam]);
+
   // 목록에선 문단·결정이 비어 있으므로, 상세 진입 시 전체 행을 다시 불러온다.
   useEffect(() => {
     if (route.page !== "meeting" && route.page !== "review") return;
