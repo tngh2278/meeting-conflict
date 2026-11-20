@@ -337,11 +337,11 @@ export default function App() {
   }
   function createProject(name: string) {
     const projectName = name.trim();
-    if (!user || !hasTeam || !projectName) return;
+    if (!user || !hasTeam) return "프로젝트를 추가할 팀을 선택해 주세요.";
+    if (!projectName) return "프로젝트 이름을 입력해 주세요.";
 
     if (teamProjects.some((project) => project.name === projectName)) {
-      setToast("현재 팀에 같은 이름의 프로젝트가 있습니다.");
-      return;
+      return "현재 팀에 같은 이름의 프로젝트가 있습니다.";
     }
 
     setProjects((items) => [
@@ -349,6 +349,7 @@ export default function App() {
       { id: crypto.randomUUID(), teamId: activeTeam.id, name: projectName },
     ]);
     setToast("프로젝트를 추가했습니다.");
+    return null;
   }
 
   function updateMeeting(id: string, update: (meeting: Meeting) => Meeting) {
@@ -1250,7 +1251,11 @@ export default function App() {
               />
             )}
             {route.page === "meetings" && (
-              <MeetingList meetings={teamMeetings} go={go} />
+              <MeetingList
+                meetings={teamMeetings}
+                go={go}
+                onCreateProject={createProject}
+              />
             )}
             {route.page === "upload" && (
               <UploadPage onSave={saveDraft} onCancel={() => go("meetings")} />

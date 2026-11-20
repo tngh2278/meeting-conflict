@@ -13,6 +13,7 @@ import type {
   Task,
 } from "./demo-data";
 import MeetingPhotos from "./MeetingPhotos";
+import Modal from "./components/Modal";
 
 export function Heading({
   title,
@@ -347,15 +348,68 @@ export function Overview({
   );
 }
 
+function ProjectForm({
+  onCreateProject,
+  onCreated,
+}: {
+  onCreateProject: (name: string) => string | null;
+  onCreated?: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <form
+      className="stack"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const message = onCreateProject(name);
+        setError(message);
+        if (message) return;
+
+        setName("");
+        onCreated?.();
+      }}
+    >
+      <div className="row-actions">
+        <label className="field">
+          <span>새 프로젝트 이름</span>
+          <input
+            value={name}
+            required
+            maxLength={100}
+            onChange={(event) => {
+              setName(event.target.value);
+              setError(null);
+            }}
+            placeholder="예: 11월 프로모션"
+          />
+        </label>
+        <button
+          type="submit"
+          className="button button-secondary"
+          disabled={!name.trim()}
+        >
+          프로젝트 추가
+        </button>
+      </div>
+      {error && <p className="error-message" role="alert">{error}</p>}
+    </form>
+  );
+}
+
 export function MeetingList({
   meetings,
   go,
+  onCreateProject,
 }: {
   meetings: Meeting[];
   go: Navigate;
+  onCreateProject: (name: string) => string | null;
 }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const rows = meetings.filter(
     (meeting) =>
       `${meeting.title} ${meeting.author} ${meeting.tags}`
@@ -369,14 +423,35 @@ export function MeetingList({
         title="회의록 저장 공간"
         description="원본 파일, 추출 결과, 회의 사진과 처리 상태를 한곳에서 확인합니다."
         action={
-          <button
-            className="button button-primary"
-            onClick={() => go("upload")}
-          >
-            + 회의록 등록
-          </button>
+          <div className="row-actions">
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => setProjectDialogOpen(true)}
+            >
+              + 프로젝트 추가
+            </button>
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={() => go("upload")}
+            >
+              + 회의록 등록
+            </button>
+          </div>
         }
       />
+      {projectDialogOpen && (
+        <Modal
+          title="프로젝트 추가"
+          onClose={() => setProjectDialogOpen(false)}
+        >
+          <ProjectForm
+            onCreateProject={onCreateProject}
+            onCreated={() => setProjectDialogOpen(false)}
+          />
+        </Modal>
+      )}
       <div className="toolbar">
         <label className="search-field">
           <span className="sr-only">회의록 검색</span>
@@ -611,14 +686,13 @@ export function ReviewPage({
   go: Navigate;
   onSource: (source: Evidence) => void;
   projects: Project[];
-  onCreateProject: (name: string) => void;
+  onCreateProject: (name: string) => string | null;
   onEdit: (candidate: Candidate) => void;
   onSubmit: () => void;
   onStatus: (status: Meeting["status"]) => void;
 }) {
   const locked = meeting.status === "submitted" || meeting.status === "done";
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [projectName, setProjectName] = useState("");
   const hasUnclassified = meeting.candidates.some(
     (candidate) =>
       candidate.confirmed &&
@@ -698,31 +772,7 @@ export function ReviewPage({
                 한 회의록에 여러 주제가 있으면 결정마다 프로젝트를 다르게 선택하세요.
                 프로젝트와 분류 결과는 현재 브라우저에서만 유지됩니다.
               </p>
-              <form
-                className="row-actions"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  onCreateProject(projectName);
-                  setProjectName("");
-                }}
-              >
-                <label className="field">
-                  <span>새 프로젝트 이름</span>
-                  <input
-                    value={projectName}
-                    maxLength={100}
-                    onChange={(event) => setProjectName(event.target.value)}
-                    placeholder="예: 11월 프로모션"
-                  />
-                </label>
-                <button
-                  type="submit"
-                  className="button button-secondary"
-                  disabled={!projectName.trim()}
-                >
-                  프로젝트 추가
-                </button>
-              </form>
+              <ProjectForm onCreateProject={onCreateProject} />
             </section>
           )}
           {meeting.candidates.length === 0 && (
