@@ -5,20 +5,23 @@ import "./workspace.css";
 import Modal from "./components/Modal";
 import { compareDecision, comparisonLabels, type ComparisonResult } from "./comparison-api";
 import UploadPage from "./UploadPage";
+import { analyzeDocument, type MeetingAnalysis } from "./document-api";
+import {
+  fetchMyNotifications,
+  markNotificationsRead,
+  type AppNotification,
+} from "./lib/notifications";
+import { fetchTeamTasks, updateTaskRow } from "./lib/tasks";
 // import ServerConnectionStatus from "./components/ServerConnectionStatus";
 import AuthDialog from "./components/AuthDialog";
 import { useAuth } from "./hooks/useAuth";
 import type { AuthUser } from "./hooks/useAuth";
-import {
-  exampleCandidates,
-  initialTasks,
-  newParagraphs,
-  resolutionLabels,
-} from "./demo-data";
+import { exampleCandidates, newParagraphs, resolutionLabels } from "./demo-data";
 import {
   fetchTeamMeetings,
   fetchMeetingFileUrl,
   fetchTeamProjects,
+  persistMeetingAnalysis,
   createTeamProject,
   saveMeetingToSupabase,
   fetchTeamDecisions,
@@ -26,6 +29,7 @@ import {
   updateMeetingStatus,
   updateConflictCandidate,
   resolveCandidate,
+  resolveTaskCandidate,
   invalidateDecision,
   deleteMeeting,
 } from "./lib/meetings";
@@ -92,6 +96,7 @@ type DialogName =
   | "notifications"
   | "invitations"
   | "resolve"
+  | "task"
   | null;
 function readRoute() {
   const [page, id, tab] = window.location.hash.replace(/^#\/?/, "").split("/");
@@ -121,6 +126,45 @@ function meetingError(message: string, error: unknown) {
     return `${message}: ${error.message}`;
   }
   return message;
+}
+
+// AI 분석 결과를 결정 후보(kind new)와 후속 업무 후보(kind action_item)로 나눈다.
+// 후속 업무도 결정과 같은 후보 테이블로 저장해 검토 화면 → 관리자 확정 순서로
+// tasks에 반영한다 (SFR-016 검수 단계).
+function candidatesFromAnalysis(
+  analysis: MeetingAnalysis,
+  meetingId: string,
+): Candidate[] {
+  return analysis.decisions.map((item) => {
+    const paragraph = analysis.extractedDocument.pages
+      .find((page) => page.pageNumber === item.source.pageNumber)
+      ?.paragraphs.find(
+        (entry) => entry.paragraphNumber === item.source.paragraphNumber,
+      );
+    const quote = item.source.text ?? "";
+    const quoteIndex =
+      quote && paragraph ? paragraph.text.indexOf(quote) : -1;
+    const startOffset =
+      paragraph && quoteIndex >= 0
+        ? paragraph.startOffset + quoteIndex
+        : null;
+    return {
+      id: crypto.randomUUID(),
+      title: item.decision,
+      owner: item.assignee ?? "",
+      dueDate: item.dueDate ?? "",
+      confirmed: true,
+      kind: item.actionItem ? ("action_item" as const) : ("new" as const),
+      evidence: {
+        documentId: meetingId,
+        page: item.source.pageNumber,
+        paragraph: item.source.paragraphNumber,
+        startOffset,
+        endOffset: startOffset === null ? null : startOffset + quote.length,
+        quote,
+      },
+    };
+  });
 }
 
 export default function App() {
@@ -157,7 +201,8 @@ export default function App() {
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [decisionsReadyTeamId, setDecisionsReadyTeamId] = useState<string | null>(null);
   const [history, setHistory] = useState<ChangeRecord[]>([]);
-  const [tasks, setTasks] = useState<Task[]>(initialTasks);
+  // 업무는 Supabase tasks 테이블을 직접 조회한다 (SFR-016).
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [profiles, setProfiles] = useState<Record<string, FaceProfile>>({});
   const [route, setRoute] = useState(readRoute);
   const [dialog, setDialog] = useState<DialogName>(null);
@@ -166,10 +211,17 @@ export default function App() {
     meetingId: string;
     candidateId: string;
   } | null>(null);
+  // 후속 업무 후보 처리(확정/제외) 대상 — 결정 처리(resolve)와 별도 다이얼로그.
+  const [taskTarget, setTaskTarget] = useState<{
+    meetingId: string;
+    candidateId: string;
+  } | null>(null);
   const [toast, setToast] = useState("");
-  const [notifications, setNotifications] = useState<
-    { id: string; teamId: string; text: string }[]
-  >([]);
+  // 알림은 notifications 테이블에서 본인(user_id) 알림을 읽어 온다 (SFR-018).
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [retryingMeetingId, setRetryingMeetingId] = useState<string | null>(
+    null,
+  );
   const [teamName, setTeamName] = useState("");
   const urls = useRef<string[]>([]);
 
@@ -273,6 +325,13 @@ export default function App() {
   const targetCandidate = targetMeeting?.candidates.find(
     (candidate) => candidate.id === resolveTarget?.candidateId,
   );
+  // 후속 업무 처리 다이얼로그용 대상
+  const taskMeeting = teamMeetings.find(
+    (meeting) => meeting.id === taskTarget?.meetingId,
+  );
+  const taskCandidate = taskMeeting?.candidates.find(
+    (candidate) => candidate.id === taskTarget?.candidateId,
+  );
   const pendingCount = teamMeetings.flatMap((meeting) =>
     meeting.status === "submitted"
       ? meeting.candidates.filter(
@@ -280,7 +339,10 @@ export default function App() {
         )
       : [],
   ).length;
-  const unread = notifications.filter((item) => item.teamId === activeTeam.id);
+  const teamNotifications = notifications.filter(
+    (item) => item.teamId === activeTeam.id,
+  );
+  const unread = teamNotifications.filter((item) => !item.readAt);
   const analyzing = meetings
     .filter((meeting) => meeting.status === "analyzing")
     .map((meeting) => meeting.id)
@@ -329,6 +391,7 @@ export default function App() {
       setDecisions([]);
       setHistory([]);
       setProjects([]);
+      setTasks([]);
       return;
     }
     let cancelled = false;
@@ -359,11 +422,60 @@ export default function App() {
       .catch(() => {
         if (!cancelled) setHistory([]);
       });
+    // 업무(SFR-016)도 팀 데이터와 함께 조회한다.
+    fetchTeamTasks(activeTeam.id)
+      .then((rows) => {
+        if (!cancelled)
+          setTasks((items) => [
+            ...items.filter((item) => item.teamId !== activeTeam.id),
+            ...rows,
+          ]);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setTasks((items) =>
+            items.filter((item) => item.teamId !== activeTeam.id),
+          );
+          // 마이그레이션 미실행 등으로 조회가 실패하면 조용히 빈 화면이
+          // 되지 않게 이유를 알려 준다.
+          setToast(meetingError("업무 목록 불러오기 실패", error));
+        }
+      });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTeam.id, hasTeam]);
+
+  // 알림(SFR-018): notifications 테이블을 조회하고 30초마다 갱신한다.
+  useEffect(() => {
+    if (!authUser) {
+      setNotifications([]);
+      return;
+    }
+    let cancelled = false;
+    const load = () => {
+      fetchMyNotifications()
+        .then((rows) => {
+          if (!cancelled) setNotifications(rows);
+        })
+        .catch(() => {
+          if (!cancelled) setNotifications([]);
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [authUser]);
+
+  function refreshNotifications() {
+    void fetchMyNotifications()
+      .then((rows) => setNotifications(rows))
+      .catch(() => {});
+  }
 
   // 활성 팀이 바뀌면 회의록 목록을 Supabase에서 불러온다.
   useEffect(() => {
@@ -421,13 +533,10 @@ export default function App() {
     setRoute(readRoute());
     window.scrollTo(0, 0);
   }
+  // 화면에서 생긴 즉시 피드백은 toast로만 알린다. 알림 목록은 notifications
+  // 테이블을 조회해 담당자에게 도착한 알림을 보여 준다 (SFR-018).
   function recordNotice(text: string) {
-    if (!hasTeam) return;
     setToast(text);
-    setNotifications((items) => [
-      { id: crypto.randomUUID(), teamId: activeTeam.id, text },
-      ...items,
-    ]);
   }
   function createUrl(file: File) {
     const type = /\.pdf$/i.test(file.name)
@@ -503,39 +612,10 @@ export default function App() {
   async function saveDraft(draft: UploadDraft) {
     if (!user || !hasTeam) return;
     const id = crypto.randomUUID();
-    // AI 결과를 기존 검토 화면에 맞추고 실제 원문 위치를 연결한다.
+    // AI 결과를 결정 후보와 후속 업무 후보로 나눈다 (SFR-008/009/016).
+    // 후속 업무도 후보로 저장되며, 관리자 확정 시 tasks에 반영된다.
     const candidates: Candidate[] = draft.analysis
-      ? draft.analysis.decisions.map((item) => {
-          const paragraph = draft.extractedDocument?.pages
-            .find((page) => page.pageNumber === item.source.pageNumber)
-            ?.paragraphs.find(
-              (entry) => entry.paragraphNumber === item.source.paragraphNumber,
-            );
-          const quote = item.source.text ?? "";
-          const quoteIndex =
-            quote && paragraph ? paragraph.text.indexOf(quote) : -1;
-          const startOffset =
-            paragraph && quoteIndex >= 0
-              ? paragraph.startOffset + quoteIndex
-              : null;
-          return {
-            id: crypto.randomUUID(),
-            title: item.decision,
-            owner: item.assignee ?? "",
-            dueDate: item.dueDate ?? "",
-            confirmed: true,
-            kind: "new",
-            evidence: {
-              documentId: id,
-              page: item.source.pageNumber,
-              paragraph: item.source.paragraphNumber,
-              startOffset,
-              endOffset:
-                startOffset === null ? null : startOffset + quote.length,
-              quote,
-            },
-          };
-        })
+      ? candidatesFromAnalysis(draft.analysis, id)
       : draft.example
         ? exampleCandidates(id).map((candidate) =>
             teamDecisions.length
@@ -560,7 +640,8 @@ export default function App() {
             page.paragraphs.map((paragraph) => paragraph.text),
           ) ?? []),
       extractedDocument: draft.extractedDocument,
-      status: draft.analysis ? "review" : draft.example ? "analyzing" : "ready",
+      // 분석 실패 시에도 원본을 failed 상태로 저장해 재시도(SFR-027)할 수 있게 한다.
+      status: draft.example ? "analyzing" : draft.analysis ? "review" : "failed",
       example: draft.example,
       candidates,
       photos: draft.photos.map(makePhoto),
@@ -574,23 +655,29 @@ export default function App() {
       }
     }
     setMeetings((items) => [meeting, ...items]);
-    go(draft.analysis || draft.example ? "review" : "meeting", id);
-setToast(
+    go(
+      draft.analysis || draft.example || draft.analysisError
+        ? "review"
+        : "meeting",
+      id,
+    );
+    setToast(
       draft.example
         ? "예시 분석 흐름을 시작했습니다."
         : draft.analysis
-          ? `AI 분석이 완료됐습니다. ${candidates.length}개 항목을 검토해 주세요.`
-          : "텍스트 추출이 완료되었습니다. 원문 탭에서 페이지·문단별 내용을 확인하세요.",
+          ? `AI 분석이 완료됐습니다. 결정 ${candidates.filter((item) => item.kind !== "action_item").length}건과 후속 업무 ${candidates.filter((item) => item.kind === "action_item").length}건을 검토해 주세요.`
+          : "분석에 실패해 원본을 저장했습니다. 회의록 화면에서 분석을 다시 요청할 수 있습니다.",
     );
-
   }
   async function submitReview(meeting: Meeting) {
     if (meeting.status !== "review" || submittingReview) return;
 
     // 확정한 결정은 현재 팀의 프로젝트를 선택해야 제출할 수 있다.
+    // 후속 업무 후보는 프로젝트 분류가 필요 없다.
     const hasUnclassified = meeting.candidates.some(
       (candidate) =>
         candidate.confirmed &&
+        candidate.kind !== "action_item" &&
         !teamProjects.some((project) => project.id === candidate.projectId),
     );
     if (hasUnclassified) {
@@ -624,6 +711,66 @@ setToast(
       role === "admin" && nextStatus === "submitted" ? "decisions" : "meeting",
       role === "admin" && nextStatus === "submitted" ? undefined : meeting.id,
     );
+  }
+
+  // 분석 실패 회의록의 원본을 저장소에서 내려받아 다시 분석한다 (SFR-027).
+  async function retryAnalysis(meeting: Meeting) {
+    if (!user || !hasTeam || meeting.example || retryingMeetingId) return;
+    setRetryingMeetingId(meeting.id);
+    updateMeeting(meeting.id, (item) => ({ ...item, status: "analyzing" }));
+    void updateMeetingStatus(meeting.id, "analyzing").catch(() => {});
+    try {
+      const fileUrl = await fetchMeetingFileUrl(meeting.teamId, meeting.id);
+      if (!fileUrl) {
+        throw new Error("원본 파일을 찾지 못했습니다. 파일을 다시 업로드해 주세요.");
+      }
+      const response = await fetch(fileUrl);
+      if (!response.ok) throw new Error("원본 파일을 내려받지 못했습니다.");
+      const blob = await response.blob();
+      const file = new File([blob], meeting.fileName || "meeting", {
+        type: blob.type ||
+          (/\.pdf$/i.test(meeting.fileName)
+            ? "application/pdf"
+            : "text/plain;charset=utf-8"),
+      });
+      const analysis = await analyzeDocument(file, new AbortController().signal);
+      const candidates = candidatesFromAnalysis(analysis, meeting.id);
+      await persistMeetingAnalysis({
+        meetingId: meeting.id,
+        teamId: meeting.teamId,
+        doc: analysis.extractedDocument,
+        candidates,
+        members: activeTeam.members,
+      });
+      updateMeeting(meeting.id, (item) => ({
+        ...item,
+        status: "review",
+        paragraphs: analysis.extractedDocument.pages.flatMap((page) =>
+          page.paragraphs.map((paragraph) => paragraph.text),
+        ),
+        extractedDocument: analysis.extractedDocument,
+        candidates,
+      }));
+      void updateMeetingStatus(meeting.id, "review").catch(() => {});
+      void fetchTeamTasks(meeting.teamId)
+        .then((rows) =>
+          setTasks((items) => [
+            ...items.filter((item) => item.teamId !== meeting.teamId),
+            ...rows,
+          ]),
+        )
+        .catch(() => {});
+      setToast(
+        `AI 분석이 완료됐습니다. 결정 ${candidates.filter((item) => item.kind !== "action_item").length}건과 후속 업무 ${candidates.filter((item) => item.kind === "action_item").length}건을 검토해 주세요.`,
+      );
+      go("review", meeting.id);
+    } catch (error) {
+      updateMeeting(meeting.id, (item) => ({ ...item, status: "failed" }));
+      void updateMeetingStatus(meeting.id, "failed").catch(() => {});
+      setToast(meetingError("분석 재시도 실패", error));
+    } finally {
+      setRetryingMeetingId(null);
+    }
   }
 
   async function handleDeleteMeeting(meeting: Meeting) {
@@ -758,7 +905,9 @@ setToast(
           : "submitted",
       };
     });
-    if (method === "replace" && previous) {
+    if (method === "replace" && previous && targetMeeting.example) {
+      // 예시 회의록 흐름: 데모 업무의 재검토 표시를 화면에서만 바꾼다.
+      // 실제 회의록은 DB(tasks.recheck)와 알림 트리거가 처리한다 (SFR-017).
       setTasks((items) => items.map((task) =>
         task.teamId === activeTeam.id && task.decisionId === previous.id
           ? { ...task, recheck: true }
@@ -769,13 +918,16 @@ setToast(
     if (!targetMeeting.example) {
       const savedTeamId = activeTeam.id;
       try {
-        const [freshDecisions, freshHistory] = await Promise.all([
+        const [freshDecisions, freshHistory, freshTasks] = await Promise.all([
           fetchTeamDecisions(savedTeamId),
           fetchTeamHistory(savedTeamId),
+          fetchTeamTasks(savedTeamId),
         ]);
         setDecisions((items) => [...items.filter((item) => item.teamId !== savedTeamId), ...freshDecisions]);
         setHistory((items) => [...items.filter((item) => item.teamId !== savedTeamId), ...freshHistory]);
+        setTasks((items) => [...items.filter((item) => item.teamId !== savedTeamId), ...freshTasks]);
         recordNotice(`${resolutionLabels[method]} 처리를 기록했습니다.`);
+        refreshNotifications();
       } catch (error) {
         setDecisionsReadyTeamId(null);
         setToast(meetingError("결정은 저장됐지만 변경 결과를 불러오지 못했습니다. 다시 접속해 주세요", error));
@@ -828,6 +980,78 @@ setToast(
       ...items,
     ]);
     recordNotice(`${resolutionLabels[method]} 처리를 기록했습니다.`);
+    setDialog(null);
+  }
+
+  // 후속 업무 후보 처리 — 확정 시 apply_task_candidate RPC가 tasks를 만들고
+  // 담당자에게 알림을 보낸다. 제외는 기각만 기록한다 (SFR-016 검수 단계).
+  function openTaskResolution(meeting: Meeting, candidate: Candidate) {
+    setTaskTarget({ meetingId: meeting.id, candidateId: candidate.id });
+    setDialog("task");
+  }
+  async function applyTaskCandidate(
+    method: "confirm" | "discard",
+    reason: string,
+  ) {
+    if (!user || role !== "admin" || !taskTarget || !reason.trim()) return;
+    const meeting = teamMeetings.find((item) => item.id === taskTarget.meetingId);
+    const candidate = meeting?.candidates.find(
+      (item) => item.id === taskTarget.candidateId,
+    );
+    if (
+      !meeting ||
+      !candidate ||
+      !candidate.confirmed ||
+      candidate.resolution ||
+      meeting.status !== "submitted"
+    ) {
+      setToast("처리할 수 있는 후속 업무 후보가 아닙니다. 화면을 다시 불러와 주세요.");
+      return;
+    }
+    try {
+      await resolveTaskCandidate({
+        candidateId: candidate.id,
+        method,
+        reason: reason.trim(),
+      });
+    } catch (error) {
+      setToast(meetingError("후속 업무 처리 저장 실패", error));
+      return;
+    }
+    updateMeeting(meeting.id, (item) => {
+      const candidates = item.candidates.map((entry) =>
+        entry.id === candidate.id
+          ? { ...entry, resolution: method, reason: reason.trim() }
+          : entry,
+      );
+      return {
+        ...item,
+        candidates,
+        status: candidates.every(
+          (entry) => !entry.confirmed || entry.resolution,
+        )
+          ? "done"
+          : "submitted",
+      };
+    });
+    const savedTeamId = activeTeam.id;
+    try {
+      const freshTasks = await fetchTeamTasks(savedTeamId);
+      setTasks((items) => [
+        ...items.filter((entry) => entry.teamId !== savedTeamId),
+        ...freshTasks,
+      ]);
+      recordNotice(
+        method === "confirm"
+          ? "후속 업무를 확정했습니다. 담당자에게 알림을 보냈습니다."
+          : "후속 업무 후보를 제외했습니다.",
+      );
+      refreshNotifications();
+    } catch (error) {
+      setToast(
+        meetingError("후속 업무는 처리됐지만 업무 목록을 새로 불러오지 못했습니다", error),
+      );
+    }
     setDialog(null);
   }
   async function createTeam(event: FormEvent) {
@@ -910,10 +1134,10 @@ setToast(
         <Modal title="로딩중 이용 안내" wide onClose={() => setDialog(null)}>
           <div className="stack">
             <p className="notice-message">
-              회원가입·로그인·팀 관리(팀 생성, 팀원 추가, 역할 변경)는
-              Supabase와 연결되어 실제 저장됩니다. 회의록·결정·업무는 아직 로컬
-              시연 데이터로 표시됩니다. 직접 선택한 PDF·TXT는 서버에서 결정
-              사항을 분석하고 원문과 함께 확인할 수 있습니다.
+              회원가입·로그인·팀 관리와 회의록·결정·업무·알림은 Supabase에
+              연결되어 실제 저장됩니다. 직접 선택한 PDF·TXT는 서버에서 결정
+              사항과 후속 업무를 분석하고 원문과 함께 확인할 수 있습니다. 회의
+              사진은 아직 화면 시연용입니다.
             </p>
             <ol className="help-steps">
               <li>
@@ -1042,10 +1266,30 @@ setToast(
       {dialog === "notifications" && (
         <Modal title="알림" onClose={() => setDialog(null)}>
           <div className="stack">
-            {unread.length ? (
-              unread.map((item) => (
+            {teamNotifications.length ? (
+              teamNotifications.map((item) => (
                 <div className="list-row" key={item.id}>
-                  <p>{item.text}</p>
+                  <div>
+                    <p>
+                      <strong>{item.title || "알림"}</strong>
+                      {!item.readAt && (
+                        <span
+                          className="badge badge-amber"
+                          style={{ marginLeft: "0.5rem" }}
+                        >
+                          안 읽음
+                        </span>
+                      )}
+                    </p>
+                    <p className="small muted">{item.body}</p>
+                    <p className="small muted">
+                      {item.createdAt
+                        ? new Date(item.createdAt).toLocaleString("ko-KR", {
+                            timeZone: "Asia/Seoul",
+                          })
+                        : ""}
+                    </p>
+                  </div>
                 </div>
               ))
             ) : (
@@ -1054,11 +1298,21 @@ setToast(
             <div className="row-actions">
               <button
                 className="button button-secondary"
-                onClick={() =>
-                  setNotifications((items) =>
-                    items.filter((item) => item.teamId !== activeTeam.id),
-                  )
-                }
+                disabled={!unread.length}
+                onClick={async () => {
+                  try {
+                    await markNotificationsRead(unread.map((item) => item.id));
+                    setNotifications((items) =>
+                      items.map((item) =>
+                        unread.some((mark) => mark.id === item.id)
+                          ? { ...item, readAt: new Date().toISOString() }
+                          : item,
+                      ),
+                    );
+                  } catch (error) {
+                    setToast(meetingError("알림 읽음 처리 실패", error));
+                  }
+                }}
               >
                 모두 읽음
               </button>
@@ -1154,6 +1408,18 @@ setToast(
           admin={role === "admin"}
           onSource={setSource}
           onApply={applyResolution}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === "task" && taskMeeting && taskCandidate && (
+        <TaskCandidateDialog
+          key={taskCandidate.id}
+          candidate={taskCandidate}
+          meetingTitle={taskMeeting.title}
+          meetingDate={taskMeeting.date}
+          admin={role === "admin"}
+          onSource={setSource}
+          onApply={applyTaskCandidate}
           onClose={() => setDialog(null)}
         />
       )}
@@ -1567,6 +1833,8 @@ setToast(
                 onSource={setSource}
                 submitting={submittingReview}
                 onSubmit={() => submitReview(currentMeeting)}
+                onRetry={() => retryAnalysis(currentMeeting)}
+                retrying={retryingMeetingId === currentMeeting.id}
                 onStatus={(status) => {
                   updateMeeting(currentMeeting.id, (meeting) => ({
                     ...meeting,
@@ -1620,6 +1888,7 @@ setToast(
                 go={go}
                 onSource={setSource}
                 onResolve={openResolution}
+                onTaskResolve={openTaskResolution}
                 onInvalidate={handleInvalidateDecision}
               />
             )}
@@ -1629,10 +1898,24 @@ setToast(
                 user={user}
                 role={role}
                 onUpdate={(task) => {
-                  if (role === "admin" || task.owner === user.name)
-                    setTasks((items) =>
-                      items.map((item) => (item.id === task.id ? task : item)),
-                    );
+                  if (role !== "admin" && task.owner !== user.name) return;
+                  setTasks((items) =>
+                    items.map((item) => (item.id === task.id ? task : item)),
+                  );
+                  // 업무 상태·재검토 완료를 tasks 테이블에 저장한다 (SFR-016/017).
+                  void updateTaskRow(task).catch((error) => {
+                    setToast(meetingError("업무 상태 저장 실패", error));
+                    void fetchTeamTasks(activeTeam.id)
+                      .then((rows) =>
+                        setTasks((items) => [
+                          ...items.filter(
+                            (item) => item.teamId !== activeTeam.id,
+                          ),
+                          ...rows,
+                        ]),
+                      )
+                      .catch(() => {});
+                  });
                 }}
                 go={go}
               />
@@ -1787,8 +2070,8 @@ setToast(
               />
             )}
             <footer className="workspace-footer">
-              팀·팀원·역할 정보는 Supabase에 저장됩니다 · 회의록·결정·업무는
-              아직 로컬 시연 데이터로 표시됩니다
+              팀·회의록·결정·업무·알림은 Supabase에 저장됩니다 · 회의 사진은
+              아직 화면 시연 데이터입니다
             </footer>
           </main>
         </div>
@@ -2012,6 +2295,101 @@ function ResolveDialog({
             비교 내용과 원문을 확인할 수 있습니다. 최종 처리는 관리자 권한이 필요합니다.
           </p>
         )}
+      </form>
+    </Modal>
+  );
+}
+
+// 후속 업무 후보 처리 다이얼로그 — 관리자가 사유를 적고 확정/제외를 고른다.
+// 확정하면 apply_task_candidate RPC가 tasks에 업무를 만들고 담당자에게 알린다.
+function TaskCandidateDialog({
+  candidate,
+  meetingTitle,
+  meetingDate,
+  admin,
+  onSource,
+  onApply,
+  onClose,
+}: {
+  candidate: Candidate;
+  meetingTitle: string;
+  meetingDate: string;
+  admin: boolean;
+  onSource: (source: Evidence) => void;
+  onApply: (method: "confirm" | "discard", reason: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const submit = async (method: "confirm" | "discard") => {
+    if (!admin || !reason.trim() || saving) return;
+    setSaving(true);
+    try {
+      await onApply(method, reason);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Modal
+      title="후속 업무 후보 처리"
+      onClose={() => {
+        if (!saving) onClose();
+      }}
+    >
+      <form
+        className="stack"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit("confirm");
+        }}
+      >
+        <div className="row-between">
+          <span className="badge badge-amber">후속 업무</span>
+          <SourceButton source={candidate.evidence} onSource={onSource} />
+        </div>
+        <h3>{candidate.title}</h3>
+        <p className="muted">
+          {meetingDate} · {meetingTitle} ·{" "}
+          {candidate.owner || "담당자 미확인"} ·{" "}
+          {candidate.dueDate || "기한 미확인"}
+        </p>
+        <p className="muted">
+          확정하면 “내 업무” 화면에 등록되고 담당자에게 알림이 갑니다. 제외하면
+          처리 사유만 기록됩니다.
+        </p>
+        <div className="field">
+          <label htmlFor="task-candidate-reason">처리 사유</label>
+          <textarea
+            id="task-candidate-reason"
+            rows={2}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="예: 담당자·기한 확인 완료"
+          />
+        </div>
+        {!admin && (
+          <p className="notice-message" role="status">
+            최종 확정·제외는 관리자만 할 수 있습니다.
+          </p>
+        )}
+        <div className="row-actions">
+          <button
+            type="submit"
+            className="button button-primary"
+            disabled={!admin || saving || !reason.trim()}
+          >
+            {saving ? "저장 중…" : "업무로 확정"}
+          </button>
+          <button
+            type="button"
+            className="button button-secondary"
+            disabled={!admin || saving || !reason.trim()}
+            onClick={() => void submit("discard")}
+          >
+            제외
+          </button>
+        </div>
       </form>
     </Modal>
   );

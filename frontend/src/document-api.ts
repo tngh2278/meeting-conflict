@@ -22,6 +22,8 @@ export type MeetingAnalysis = {
     decision: string;
     assignee: string | null;
     dueDate: string | null;
+    // 후속 업무(true)면 tasks 테이블로, 확정 결정(false)면 결정 후보로 간다.
+    actionItem: boolean;
     source: {
       pageNumber: number | null;
       paragraphNumber: number;

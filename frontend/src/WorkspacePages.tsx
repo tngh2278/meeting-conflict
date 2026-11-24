@@ -27,6 +27,7 @@ export function DecisionsPage({
   go,
   onSource,
   onResolve,
+  onTaskResolve,
   onInvalidate,
 }: {
   meetings: Meeting[];
@@ -37,16 +38,37 @@ export function DecisionsPage({
   go: Navigate;
   onSource: (source: Evidence) => void;
   onResolve: (meeting: Meeting, candidate: Candidate) => void;
+  onTaskResolve: (meeting: Meeting, candidate: Candidate) => void;
   onInvalidate: (decision: Decision, reason: string) => Promise<string | null>;
 }) {
-  const [tab, setTab] = useState(role === "admin" ? "pending" : "current");
+  const [tab, setTab] = useState<"pending" | "tasks" | "current" | "held" | "history">(
+    role === "admin" ? "pending" : "current",
+  );
   const [invalidationTarget, setInvalidationTarget] = useState<Decision | null>(null);
   const projectName = (id: string | undefined) =>
     projects.find((project) => project.id === id)?.name ?? "미분류";
   const pending = meetings.flatMap((meeting) =>
     meeting.status === "submitted"
       ? meeting.candidates
-          .filter((candidate) => candidate.confirmed && !candidate.resolution)
+          .filter(
+            (candidate) =>
+              candidate.confirmed &&
+              !candidate.resolution &&
+              candidate.kind !== "action_item",
+          )
+          .map((candidate) => ({ meeting, candidate }))
+      : [],
+  );
+  // 후속 업무 후보는 결정 비교 대상이 아니라 확정/제외로 처리한다 (SFR-016).
+  const taskCandidates = meetings.flatMap((meeting) =>
+    meeting.status === "submitted"
+      ? meeting.candidates
+          .filter(
+            (candidate) =>
+              candidate.kind === "action_item" &&
+              candidate.confirmed &&
+              !candidate.resolution,
+          )
           .map((candidate) => ({ meeting, candidate }))
       : [],
   );
@@ -101,6 +123,13 @@ export function DecisionsPage({
           onClick={() => setTab("pending")}
         >
           처리 대기 <span>{pending.length}</span>
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === "tasks"}
+          onClick={() => setTab("tasks")}
+        >
+          후속 업무 <span>{taskCandidates.length}</span>
         </button>
         <button
           role="tab"
@@ -170,6 +199,59 @@ export function DecisionsPage({
                 <EmptyState
                   title="관리자 확인을 기다리는 결정이 없습니다"
                   description="회의록의 추출 결과를 검토 제출하면 확정 항목이 여기에 표시됩니다."
+                  action={
+                    <button
+                      className="button button-secondary"
+                      onClick={() => go("meetings")}
+                    >
+                      회의록 확인
+                    </button>
+                  }
+                />
+              </section>
+            )}
+          </div>
+        </>
+      )}
+      {tab === "tasks" && (
+        <>
+          <div className="notice-message">
+            {role === "admin"
+              ? "확정하면 후속 업무가 담당자의 “내 업무”에 등록되고 알림이 갑니다. 제외하면 처리 사유만 기록됩니다."
+              : "관리자가 확정한 후속 업무는 담당자의 “내 업무” 화면에 표시됩니다."}
+          </div>
+          <div className="stack">
+            {taskCandidates.map(({ meeting, candidate }) => (
+              <section className="card stack" key={candidate.id}>
+                <div className="row-between">
+                  <span className="badge badge-amber">후속 업무</span>
+                  <span className="small muted">
+                    {meeting.date} · {meeting.title}
+                  </span>
+                </div>
+                <h2>{candidate.title}</h2>
+                <p className="muted">
+                  {candidate.owner || "담당자 미확인"} ·{" "}
+                  {candidate.dueDate || "기한 미확인"}
+                </p>
+                <div className="row-actions">
+                  {role === "admin" && (
+                    <button
+                      className="button button-primary"
+                      onClick={() => onTaskResolve(meeting, candidate)}
+                    >
+                      확정·제외 처리하기
+                    </button>
+                  )}
+                  <SourceButton source={candidate.evidence} onSource={onSource} />
+                </div>
+              </section>
+            ))}
+            {!taskCandidates.length && (
+              <section className="card">
+                <EmptyState
+                  title="처리를 기다리는 후속 업무가 없습니다"
+                  description="검토 화면에서 확정한 후속 업무 후보가 여기에 표시됩니다."
                   action={
                     <button
                       className="button button-secondary"
@@ -372,7 +454,9 @@ export function TasksPage({
         }
       />
       <p className="page-note">
-        D-Day는 시연 데이터 기준일인 2026년 10월 13일을 기준으로 표시합니다.
+        D-Day는 오늘 날짜를 기준으로 계산됩니다. 연결된 결정이 새 결정으로
+        교체되면 업무에 “재검토 필요” 표시가 나타나고, 재검토를 마치면 표시를
+        지울 수 있습니다.
       </p>
       <section className="card table-card">
         <div className="table-scroll">

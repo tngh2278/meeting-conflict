@@ -319,7 +319,6 @@ export function Overview({
         <section className="card stack">
           <div className="row-between">
             <h2>이번 주 할 일</h2>
-            <span className="small muted">예시 기준일 10.13</span>
           </div>
           {mine.length ? (
             mine.slice(0, 3).map((task) => (
@@ -420,13 +419,18 @@ export function MeetingList({
 }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
+  // 기간 필터(SFR-023): 회의일 범위로 목록을 좁힌다.
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const rows = meetings.filter(
     (meeting) =>
       `${meeting.title} ${meeting.author} ${meeting.tags}`
         .toLowerCase()
         .includes(query.toLowerCase()) &&
-      (!status || meeting.status === status),
+      (!status || meeting.status === status) &&
+      (!dateFrom || meeting.date >= dateFrom) &&
+      (!dateTo || meeting.date <= dateTo),
   );
   return (
     <>
@@ -485,6 +489,33 @@ export function MeetingList({
             </option>
           ))}
         </select>
+        <input
+          type="date"
+          aria-label="회의일 시작"
+          value={dateFrom}
+          max={dateTo || undefined}
+          onChange={(event) => setDateFrom(event.target.value)}
+        />
+        <span className="muted">~</span>
+        <input
+          type="date"
+          aria-label="회의일 종료"
+          value={dateTo}
+          min={dateFrom || undefined}
+          onChange={(event) => setDateTo(event.target.value)}
+        />
+        {(dateFrom || dateTo) && (
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => {
+              setDateFrom("");
+              setDateTo("");
+            }}
+          >
+            기간 지우기
+          </button>
+        )}
         <span className="small muted">총 {rows.length}개</span>
       </div>
       <div className="card table-card">
@@ -719,6 +750,8 @@ export function ReviewPage({
   submitting,
   onSubmit,
   onStatus,
+  onRetry,
+  retrying,
 }: {
   meeting: Meeting;
   members: Member[];
@@ -730,10 +763,21 @@ export function ReviewPage({
   submitting: boolean;
   onSubmit: () => Promise<void>;
   onStatus: (status: Meeting["status"]) => void;
+  // 실제 회의록의 분석 재시도(SFR-027). 예시 회의록은 기존 데모 흐름(onStatus)을 쓴다.
+  onRetry?: () => void;
+  retrying?: boolean;
 }) {
   const locked = meeting.status === "submitted" || meeting.status === "done";
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const hasUnclassified = meeting.candidates.some(
+  // 결정 후보와 후속 업무 후보(kind='action_item')는 카드 형태가 다르다.
+  // 후속 업무는 프로젝트 분류 없이 내용·담당자·기한만 확인한다 (SFR-016).
+  const decisionCards = meeting.candidates.filter(
+    (candidate) => candidate.kind !== "action_item",
+  );
+  const taskCards = meeting.candidates.filter(
+    (candidate) => candidate.kind === "action_item",
+  );
+  const hasUnclassified = decisionCards.some(
     (candidate) =>
       candidate.confirmed &&
       !projects.some((project) => project.id === candidate.projectId),
@@ -755,32 +799,46 @@ export function ReviewPage({
         action={<StatusBadge status={meeting.status} />}
       />
       {meeting.status === "analyzing" ? (
-        <section className="card analysis-state">
-          <div className="spinner" />
-          <h2>예시 분석 흐름 진행 중</h2>
-          <p className="muted">문서 준비 → 결정 후보 추출 → 사용자 검토</p>
-          <p className="small muted">
-            외부 AI를 호출하지 않는 화면 시연입니다.
-          </p>
-          <button
-            className="button button-secondary"
-            onClick={() => onStatus("failed")}
-          >
-            실패 상황 확인
-          </button>
-        </section>
+        meeting.example ? (
+          <section className="card analysis-state">
+            <div className="spinner" />
+            <h2>예시 분석 흐름 진행 중</h2>
+            <p className="muted">문서 준비 → 결정 후보 추출 → 사용자 검토</p>
+            <p className="small muted">
+              외부 AI를 호출하지 않는 화면 시연입니다.
+            </p>
+            <button
+              className="button button-secondary"
+              onClick={() => onStatus("failed")}
+            >
+              실패 상황 확인
+            </button>
+          </section>
+        ) : (
+          <section className="card analysis-state">
+            <div className="spinner" />
+            <h2>AI가 회의록을 분석하고 있습니다</h2>
+            <p className="muted">
+              결정 사항과 후속 업무를 추출하는 중입니다. 최대 1분 정도 걸릴 수
+              있습니다.
+            </p>
+          </section>
+        )
       ) : meeting.status === "failed" ? (
         <section className="card analysis-state">
           <span className="failure-symbol">!</span>
           <h2>분석 요청에 실패했습니다</h2>
           <p className="muted">
-            원본 회의록은 그대로 유지됩니다. 분석만 다시 요청할 수 있습니다.
+            원본 회의록은 저장되어 있습니다. 분석만 다시 요청할 수 있습니다.
           </p>
           <button
             className="button button-primary"
-            onClick={() => onStatus("analyzing")}
+            disabled={retrying}
+            onClick={() =>
+              meeting.example ? onStatus("analyzing") : onRetry?.()
+            }
           >
-            분석 재시도
+            {retrying ? "다시 분석하는 중…" : "분석 재시도"}
           </button>
         </section>
       ) : meeting.status === "ready" ? (
@@ -805,7 +863,7 @@ export function ReviewPage({
               ? "검토 제출이 완료되었습니다. 현재 유효한 결정은 관리자 처리 이후 갱신됩니다."
               : "AI가 추출한 내용을 원문과 대조해 검토해 주세요."}
           </div>
-          {!locked && meeting.candidates.length > 0 && (
+          {!locked && decisionCards.length > 0 && (
             <section className="card stack">
               <h2>프로젝트 분류</h2>
               <p className="muted">
@@ -821,7 +879,7 @@ export function ReviewPage({
             />
           )}
           <div className="stack">
-            {meeting.candidates.map((candidate, index) => (
+            {decisionCards.map((candidate, index) => (
               <section className="card candidate-card" key={candidate.id}>
                 <div className="row-between">
                   <div className="row-actions">
@@ -918,6 +976,96 @@ export function ReviewPage({
                       }
                     >
                       <option value="confirmed">회의에서 확정</option>
+                      <option value="proposal">제안·논의</option>
+                    </select>
+                  </div>
+                </div>
+              </section>
+            ))}
+          </div>
+          {taskCards.length > 0 && (
+            <section className="card stack">
+              <h2>후속 업무 후보</h2>
+              <p className="muted">
+                이 항목들은 결정이 아니라 실행할 업무입니다. 내용·담당자·기한을
+                확인하고 확정해 주세요. 프로젝트 분류는 필요 없습니다.
+              </p>
+            </section>
+          )}
+          <div className="stack">
+            {taskCards.map((candidate, index) => (
+              <section className="card candidate-card" key={candidate.id}>
+                <div className="row-between">
+                  <div className="row-actions">
+                    <span className="number-label">
+                      {String(decisionCards.length + index + 1).padStart(2, "0")}
+                    </span>
+                    <span className="badge badge-amber">후속 업무</span>
+                  </div>
+                  <SourceButton
+                    source={candidate.evidence}
+                    onSource={onSource}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor={`task-title-${candidate.id}`}>업무 내용</label>
+                  <input
+                    id={`task-title-${candidate.id}`}
+                    value={candidate.title}
+                    disabled={locked || submitting}
+                    onChange={(event) =>
+                      onEdit({ ...candidate, title: event.target.value })
+                    }
+                  />
+                </div>
+                <div className="candidate-fields">
+                  <div className="field">
+                    <label htmlFor={`task-owner-${candidate.id}`}>담당자</label>
+                    <select
+                      id={`task-owner-${candidate.id}`}
+                      disabled={locked || submitting}
+                      value={candidate.owner}
+                      onChange={(event) =>
+                        onEdit({ ...candidate, owner: event.target.value })
+                      }
+                    >
+                      <option value="">미확인</option>
+                      {candidate.owner && !members.some((member) => member.name === candidate.owner) && (
+                        <option value={candidate.owner}>{candidate.owner}</option>
+                      )}
+                      {members.map((member) => (
+                        <option key={member.id}>{member.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label htmlFor={`task-due-${candidate.id}`}>마감일</label>
+                    <input
+                      id={`task-due-${candidate.id}`}
+                      type="date"
+                      disabled={locked || submitting}
+                      value={candidate.dueDate}
+                      onChange={(event) =>
+                        onEdit({ ...candidate, dueDate: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor={`task-confirmed-${candidate.id}`}>
+                      확정 여부
+                    </label>
+                    <select
+                      id={`task-confirmed-${candidate.id}`}
+                      disabled={locked || submitting}
+                      value={candidate.confirmed ? "confirmed" : "proposal"}
+                      onChange={(event) =>
+                        onEdit({
+                          ...candidate,
+                          confirmed: event.target.value === "confirmed",
+                        })
+                      }
+                    >
+                      <option value="confirmed">업무로 확정</option>
                       <option value="proposal">제안·논의</option>
                     </select>
                   </div>

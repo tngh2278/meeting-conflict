@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import Modal from "./components/Modal";
-import { analyzeDocument } from "./document-api";
+import { analyzeDocument, type MeetingAnalysis } from "./document-api";
 import { DEMO_DATE, newParagraphs } from "./demo-data";
 import type { UploadDraft } from "./demo-data";
 
@@ -141,9 +141,20 @@ function UploadPage({
     uploadRequest.current = request;
     setUploading(true);
     try {
-      const analysis = example
-        ? undefined
-        : await analyzeDocument(selectedFile, request.signal);
+      let analysis: MeetingAnalysis | undefined;
+      let analysisError = "";
+      if (!example) {
+        try {
+          analysis = await analyzeDocument(selectedFile, request.signal);
+        } catch (analyzeError) {
+          // 취소가 아니면 분석 실패를 기록하고 원본부터 저장한다.
+          // 실패한 회의록은 상세 화면에서 분석을 다시 요청할 수 있다 (SFR-027).
+          if (request.signal.aborted) return;
+          analysisError = analyzeError instanceof Error
+            ? analyzeError.message
+            : "회의록 분석에 실패했습니다.";
+        }
+      }
       await onSave({
         file: selectedFile,
         title: meetingTitle.trim(),
@@ -153,12 +164,13 @@ function UploadPage({
         example,
         extractedDocument: analysis?.extractedDocument,
         analysis,
+        analysisError,
         photos,
         photoConsent,
       });
-    } catch (error) {
+    } catch (saveError) {
       if (!request.signal.aborted) {
-        setError(error instanceof Error ? error.message : "회의록 분석에 실패했습니다. 다시 시도해 주세요.");
+        setError(saveError instanceof Error ? saveError.message : "회의록 저장에 실패했습니다. 다시 시도해 주세요.");
       }
     } finally {
       uploadRequest.current = null;
