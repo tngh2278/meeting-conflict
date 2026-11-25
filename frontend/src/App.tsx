@@ -344,7 +344,7 @@ export default function App() {
   );
   const unread = teamNotifications.filter((item) => !item.readAt);
   const analyzing = meetings
-    .filter((meeting) => meeting.status === "analyzing")
+    .filter((meeting) => meeting.example && meeting.status === "analyzing")
     .map((meeting) => meeting.id)
     .join(",");
 
