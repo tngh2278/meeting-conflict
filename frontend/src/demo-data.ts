@@ -21,7 +21,14 @@ export type Page =
   | "team"
   | "profile";
 export type Navigate = (page: Page, id?: string) => void;
-export type Resolution = "keep" | "replace" | "exception" | "hold";
+// confirm/discard 는 후속 업무(kind='action_item') 후보의 처리 결과다.
+export type Resolution =
+  | "keep"
+  | "replace"
+  | "exception"
+  | "hold"
+  | "confirm"
+  | "discard";
 export type Evidence = {
   documentId: string;
   page: number | null;
@@ -43,7 +50,8 @@ export type Candidate = {
   owner: string;
   dueDate: string;
   confirmed: boolean;
-  kind: "change" | "new";
+  // "new"/"change" = 결정 후보, "action_item" = 후속 업무 후보 (검토 후 tasks로 감)
+  kind: "change" | "new" | "action_item";
   evidence: Evidence;
   resolution?: Resolution;
   reason?: string;
@@ -122,6 +130,7 @@ export type Task = {
   status: "대기" | "진행 중" | "완료";
   recheck: boolean;
   decisionId: string;
+  meetingId?: string;
 };
 export type UploadDraft = {
   file: File;
@@ -132,15 +141,23 @@ export type UploadDraft = {
   example: boolean;
   extractedDocument?: ExtractedDocument;
   analysis?: MeetingAnalysis;
+  // 분석 실패 시 원본만 저장하고 재시도(SFR-027)할 수 있게 실패 사유를 전달한다.
+  analysisError?: string;
   photos: File[];
   photoConsent: boolean;
 };
 
 export const DEMO_DATE = "2026-10-13";
+// D-Day는 오늘 날짜(한국 시간)를 기준으로 계산한다. (SFR-021)
 export function daysLeft(date: string) {
+  // 마감일이 없는 업무(결정에 마감일이 null인 경우)는 D-Day 대신 빈 값을 보여 준다.
+  if (!date || isNaN(Date.parse(`${date}T00:00:00+09:00`))) return "";
+  const kstToday = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Seoul",
+  }).format(new Date());
   const difference = Math.round(
     (Date.parse(`${date}T00:00:00+09:00`) -
-      Date.parse(`${DEMO_DATE}T00:00:00+09:00`)) /
+      Date.parse(`${kstToday}T00:00:00+09:00`)) /
       86400000,
   );
   return difference === 0
@@ -156,6 +173,8 @@ export const resolutionLabels: Record<ChangeRecord["method"], string> = {
   hold: "논의 중으로 보류",
   new: "신규 결정 반영",
   invalidate: "무효 처리",
+  confirm: "후속 업무 확정",
+  discard: "후속 업무 제외",
 };
 export const statusLabels: Record<Meeting["status"], string> = {
   ready: "분석 대기",
@@ -297,35 +316,5 @@ export const initialDecisions: Decision[] = [
     evidence: evidence("meeting-old", 2, oldParagraphs[1]),
   },
 ];
-export const initialTasks: Task[] = [
-  {
-    id: "task-guide",
-    teamId: "service",
-    title: "행사 안내문 초안 작성",
-    owner: "장준경",
-    dueDate: "2026-10-16",
-    status: "진행 중",
-    recheck: false,
-    decisionId: "decision-deadline",
-  },
-  {
-    id: "task-check",
-    teamId: "service",
-    title: "행사 안내문에 자료 제출 마감 반영",
-    owner: "장준경",
-    dueDate: "2026-10-15",
-    status: "대기",
-    recheck: false,
-    decisionId: "decision-deadline",
-  },
-  {
-    id: "task-collect",
-    teamId: "service",
-    title: "행사 준비 자료 취합",
-    owner: "송채은",
-    dueDate: "2026-10-15",
-    status: "대기",
-    recheck: false,
-    decisionId: "decision-deadline",
-  },
-];
+// 업무(Task)는 demo 데이터를 쓰지 않는다 — lib/tasks.ts 로 Supabase tasks 테이블을
+// 직접 조회한다 (SFR-016).

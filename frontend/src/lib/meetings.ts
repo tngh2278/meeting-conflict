@@ -194,7 +194,7 @@ export async function fetchMeetingFileUrl(teamId: string, meetingId: string): Pr
 interface CandidateRow {
   candidate_id: string;
   project_id: string | null;
-  kind: "change" | "new";
+  kind: "change" | "new" | "action_item";
   decision_text: string;
   assignee_name: string | null;
   due_date: string | null; // DATE → "YYYY-MM-DD"
@@ -202,7 +202,7 @@ interface CandidateRow {
   source_paragraph_number: number | null;
   source_text: string | null;
   status: "pending" | "confirmed" | "resolved";
-  resolution: "keep" | "replace" | "exception" | "hold" | null;
+  resolution: "keep" | "replace" | "exception" | "hold" | "confirm" | "discard" | null;
   resolution_reason: string | null;
 }
 
@@ -392,27 +392,63 @@ async function persistMeetingContent(
 }
 
 // 업로드에서 만든 후보 UUID를 저장해 검토 화면에서도 같은 행을 편집한다.
-async function persistConflictCandidates(
-  meeting: Meeting,
+// 분석 재시도(SFR-027)로 다시 저장할 때를 대비해 이미 있는 후보는 건너뛴다.
+async function insertCandidateRows(
+  meetingId: string,
+  teamId: string,
+  candidates: Candidate[],
   members: Member[],
 ): Promise<void> {
-  if (!meeting.candidates.length) return;
-  const rows = meeting.candidates.map((candidate) => ({
-    candidate_id: candidate.id,
-    meeting_id: meeting.id,
-    team_id: meeting.teamId,
-    kind: candidate.kind,
-    decision_text: candidate.title,
-    assignee_name: candidate.owner || null,
-    assignee_user_id: members.find((member) => member.name === candidate.owner)?.id ?? null,
-    due_date: candidate.dueDate || null,
-    source_page_number: candidate.evidence.page,
-    source_paragraph_number: candidate.evidence.paragraph,
-    source_text: candidate.evidence.quote || null,
-    status: candidate.confirmed ? "confirmed" : "pending",
-  }));
-  const { error } = await supabase.from("conflict_candidates").insert(rows);
+  if (!candidates.length) return;
+  const { data: existing, error } = await supabase
+    .from("conflict_candidates")
+    .select("candidate_id")
+    .eq("meeting_id", meetingId);
   if (error) throw error;
+  const have = new Set((existing ?? []).map((row) => String(row.candidate_id)));
+  const rows = candidates
+    .filter((candidate) => !have.has(candidate.id))
+    .map((candidate) => ({
+      candidate_id: candidate.id,
+      meeting_id: meetingId,
+      team_id: teamId,
+      kind: candidate.kind,
+      decision_text: candidate.title,
+      assignee_name: candidate.owner || null,
+      assignee_user_id: members.find((member) => member.name === candidate.owner)?.id ?? null,
+      due_date: candidate.dueDate || null,
+      source_page_number: candidate.evidence.page,
+      source_paragraph_number: candidate.evidence.paragraph,
+      source_text: candidate.evidence.quote || null,
+      status: candidate.confirmed ? "confirmed" : "pending",
+    }));
+  if (!rows.length) return;
+  const { error: insertError } = await supabase.from("conflict_candidates").insert(rows);
+  if (insertError) throw insertError;
+}
+
+// AI 분석 결과(원문·결정 후보·후속 업무)를 회의록에 저장한다.
+// 업로드 실패 뒤 재시도(SFR-027)에서도 호출하므로 각 단계는 멱등하다.
+// 후속 업무(is_action_item)는 이제 결정과 같은 conflict_candidates 에
+// kind='action_item' 로 저장되고, 관리자 확정(apply_task_candidate RPC) 시
+// tasks 테이블로 넘어간다 (SFR-016 검수 단계).
+export async function persistMeetingAnalysis(input: {
+  meetingId: string;
+  teamId: string;
+  doc: ExtractedDocument;
+  candidates: Candidate[];
+  members: Member[];
+}): Promise<void> {
+  const { data: existingPages, error: pagesError } = await supabase
+    .from("meeting_pages")
+    .select("page_id")
+    .eq("meeting_id", input.meetingId)
+    .limit(1);
+  if (pagesError) throw pagesError;
+  if (!existingPages?.length) {
+    await persistMeetingContent(input.meetingId, input.doc);
+  }
+  await insertCandidateRows(input.meetingId, input.teamId, input.candidates, input.members);
 }
 
 export async function saveMeetingToSupabase(
@@ -437,9 +473,14 @@ export async function saveMeetingToSupabase(
   try {
     await uploadMeetingFile(meeting.teamId, meeting.id, draft.file);
     if (draft.extractedDocument) {
-      await persistMeetingContent(meeting.id, draft.extractedDocument);
+      await persistMeetingAnalysis({
+        meetingId: meeting.id,
+        teamId: meeting.teamId,
+        doc: draft.extractedDocument,
+        candidates: meeting.candidates,
+        members,
+      });
     }
-    await persistConflictCandidates(meeting, members);
   } catch (error) {
     // 실패한 업로드는 목록에서 숨겨 검토 가능한 회의록으로 보이지 않게 한다.
     await deleteMeeting(meeting.id).catch(() => {});
@@ -576,6 +617,21 @@ export async function invalidateDecision(decisionId: string, reason: string): Pr
   const { error } = await supabase.rpc("invalidate_meeting_decision", {
     p_decision_id: decisionId,
     p_reason: reason,
+  });
+  if (error) throw error;
+}
+
+// 후속 업무 후보 확정(confirm)/제외(discard) — 확정 시 DB가 tasks를 만들고
+// 담당자에게 알림을 보낸다 (마이그레이션 202611220003).
+export async function resolveTaskCandidate(input: {
+  candidateId: string;
+  method: "confirm" | "discard";
+  reason: string;
+}): Promise<void> {
+  const { error } = await supabase.rpc("apply_task_candidate", {
+    p_candidate_id: input.candidateId,
+    p_method: input.method,
+    p_reason: input.reason,
   });
   if (error) throw error;
 }

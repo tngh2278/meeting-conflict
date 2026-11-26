@@ -134,7 +134,7 @@ public class MeetingAnalysisService {
             }
 
             Source source = quoteSource(sources.get(item.sourceId() - 1), item.sourceQuote());
-            decisions.add(new Decision(item.decision(), item.assignee(), dueDate, source));
+            decisions.add(new Decision(item.decision(), item.assignee(), dueDate, source, item.actionItem()));
         }
 
         return new AnalysisResult(document.fileName(), decisions, document);
@@ -232,7 +232,7 @@ public class MeetingAnalysisService {
     public record AnalysisResult(String fileName, List<Decision> decisions, ExtractedDocument extractedDocument) {
     }
 
-    public record Decision(String decision, String assignee, LocalDate dueDate, Source source) {
+    public record Decision(String decision, String assignee, LocalDate dueDate, Source source, boolean actionItem) {
     }
 
     public record Source(Integer pageNumber, int paragraphNumber, String text) {
