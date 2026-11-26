@@ -28,4 +28,9 @@ public class DocumentController {
         }
         return extractor.extract(file.getOriginalFilename(), file.getBytes());
     }
+
+    @PostMapping(path = "/meeting-info", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public MeetingBasicInfo extractMeetingInfo(@RequestParam("file") MultipartFile file) throws IOException {
+        return MeetingBasicInfo.from(extract(file));
+    }
 }

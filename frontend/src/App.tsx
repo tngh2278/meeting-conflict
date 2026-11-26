@@ -1,9 +1,18 @@
+import {
+  deleteSavedMeetingPhoto,
+  saveMeetingPhoto,
+  toMeetingPhoto,
+} from "./lib/meeting-photos";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import "./App.css";
 import "./workspace.css";
 import Modal from "./components/Modal";
-import { compareDecision, comparisonLabels, type ComparisonResult } from "./comparison-api";
+import {
+  compareDecision,
+  comparisonLabels,
+  type ComparisonResult,
+} from "./comparison-api";
 import UploadPage from "./UploadPage";
 import { analyzeDocument, type MeetingAnalysis } from "./document-api";
 import {
@@ -16,7 +25,11 @@ import { fetchTeamTasks, updateTaskRow } from "./lib/tasks";
 import AuthDialog from "./components/AuthDialog";
 import { useAuth } from "./hooks/useAuth";
 import type { AuthUser } from "./hooks/useAuth";
-import { exampleCandidates, newParagraphs, resolutionLabels } from "./demo-data";
+import {
+  exampleCandidates,
+  newParagraphs,
+  resolutionLabels,
+} from "./demo-data";
 import {
   fetchTeamMeetings,
   fetchMeetingFileUrl,
@@ -122,7 +135,12 @@ function readRoute() {
 }
 
 function meetingError(message: string, error: unknown) {
-  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
     return `${message}: ${error.message}`;
   }
   return message;
@@ -142,12 +160,9 @@ function candidatesFromAnalysis(
         (entry) => entry.paragraphNumber === item.source.paragraphNumber,
       );
     const quote = item.source.text ?? "";
-    const quoteIndex =
-      quote && paragraph ? paragraph.text.indexOf(quote) : -1;
+    const quoteIndex = quote && paragraph ? paragraph.text.indexOf(quote) : -1;
     const startOffset =
-      paragraph && quoteIndex >= 0
-        ? paragraph.startOffset + quoteIndex
-        : null;
+      paragraph && quoteIndex >= 0 ? paragraph.startOffset + quoteIndex : null;
     return {
       id: crypto.randomUUID(),
       title: item.decision,
@@ -195,11 +210,15 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(false);
-  const [deletingMeetingId, setDeletingMeetingId] = useState<string | null>(null);
+  const [deletingMeetingId, setDeletingMeetingId] = useState<string | null>(
+    null,
+  );
   const [submittingReview, setSubmittingReview] = useState(false);
   const candidateWrites = useRef(new Map<string, Promise<void>>());
   const [decisions, setDecisions] = useState<Decision[]>([]);
-  const [decisionsReadyTeamId, setDecisionsReadyTeamId] = useState<string | null>(null);
+  const [decisionsReadyTeamId, setDecisionsReadyTeamId] = useState<
+    string | null
+  >(null);
   const [history, setHistory] = useState<ChangeRecord[]>([]);
   // 업무는 Supabase tasks 테이블을 직접 조회한다 (SFR-016).
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -397,10 +416,13 @@ export default function App() {
     let cancelled = false;
     fetchTeamProjects(activeTeam.id)
       .then((rows) => {
-        if (!cancelled) setProjects((items) => {
-          const byId = new Map([...items, ...rows].map((project) => [project.id, project]));
-          return [...byId.values()];
-        });
+        if (!cancelled)
+          setProjects((items) => {
+            const byId = new Map(
+              [...items, ...rows].map((project) => [project.id, project]),
+            );
+            return [...byId.values()];
+          });
       })
       .catch((error) => {
         if (!cancelled) setToast(meetingError("프로젝트 조회 실패", error));
@@ -502,10 +524,14 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTeam.id, hasTeam]);
 
-  const previewMeeting = sourceMeeting ??
-    (route.page === "meeting" || route.page === "review" ? currentMeeting : undefined);
+  const previewMeeting =
+    sourceMeeting ??
+    (route.page === "meeting" || route.page === "review"
+      ? currentMeeting
+      : undefined);
   const previewMeetingId = previewMeeting?.id;
-  const needsFileUrl = !!previewMeeting && !previewMeeting.example && !previewMeeting.fileUrl;
+  const needsFileUrl =
+    !!previewMeeting && !previewMeeting.example && !previewMeeting.fileUrl;
   const previewTeamId = activeTeam.id;
 
   useEffect(() => {
@@ -514,15 +540,20 @@ export default function App() {
     fetchMeetingFileUrl(previewTeamId, previewMeetingId)
       .then((fileUrl) => {
         if (!cancelled && fileUrl) {
-          setMeetings((items) => items.map((item) =>
-            item.id === previewMeetingId ? { ...item, fileUrl } : item,
-          ));
+          setMeetings((items) =>
+            items.map((item) =>
+              item.id === previewMeetingId ? { ...item, fileUrl } : item,
+            ),
+          );
         }
       })
       .catch((error) => {
-        if (!cancelled) setToast(meetingError("원본 파일 주소 조회 실패", error));
+        if (!cancelled)
+          setToast(meetingError("원본 파일 주소 조회 실패", error));
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [needsFileUrl, previewMeetingId, previewTeamId]);
 
   function go(page: Page, id?: string) {
@@ -575,11 +606,20 @@ export default function App() {
 
     try {
       const project = await createTeamProject(activeTeam.id, projectName);
-      setProjects((items) => items.some((item) => item.id === project.id) ? items : [...items, project]);
+      setProjects((items) =>
+        items.some((item) => item.id === project.id)
+          ? items
+          : [...items, project],
+      );
       setToast("프로젝트를 추가했습니다.");
       return null;
     } catch (error) {
-      if (error && typeof error === "object" && "code" in error && error.code === "23505") {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "23505"
+      ) {
         return "현재 팀에 같은 이름의 프로젝트가 있습니다.";
       }
       return meetingError("프로젝트 추가 실패", error);
@@ -590,7 +630,9 @@ export default function App() {
     const writes = candidateWrites.current;
     // 빠르게 입력하더라도 같은 후보의 수정은 순서대로 저장한다.
     const current = writes.get(candidate.id) ?? Promise.resolve();
-    const next = current.catch(() => {}).then(() => updateConflictCandidate(candidate, activeTeam.members));
+    const next = current
+      .catch(() => {})
+      .then(() => updateConflictCandidate(candidate, activeTeam.members));
     writes.set(candidate.id, next);
     const clear = () => {
       if (writes.get(candidate.id) === next) writes.delete(candidate.id);
@@ -609,6 +651,38 @@ export default function App() {
       ),
     );
   }
+  async function registerMeetingPhotos(
+    meeting: Meeting,
+    files: File[],
+    consent: boolean,
+  ) {
+    const photos: MeetingPhoto[] = [];
+    let photoError: string | undefined;
+
+    for (const file of files) {
+      try {
+        if (meeting.example) {
+          photos.push(makePhoto(file));
+        } else {
+          const row = await saveMeetingPhoto(
+            meeting.teamId,
+            meeting.id,
+            file,
+            consent,
+          );
+          photos.push(toMeetingPhoto(row));
+        }
+      } catch (error) {
+        photoError ??= meetingError(
+          "사진 저장 실패 (" + file.name + ")",
+          error,
+        );
+      }
+    }
+
+    return { photos, photoError };
+  }
+
   async function saveDraft(draft: UploadDraft) {
     if (!user || !hasTeam) return;
     const id = crypto.randomUUID();
@@ -628,6 +702,8 @@ export default function App() {
       teamId: activeTeam.id,
       title: draft.title,
       date: draft.date,
+      time: draft.time,
+      attendees: draft.attendees,
       location: draft.location,
       author: user.name,
       fileName: draft.file.name,
@@ -641,20 +717,35 @@ export default function App() {
           ) ?? []),
       extractedDocument: draft.extractedDocument,
       // 분석 실패 시에도 원본을 failed 상태로 저장해 재시도(SFR-027)할 수 있게 한다.
-      status: draft.example ? "analyzing" : draft.analysis ? "review" : "failed",
+      status: draft.example
+        ? "analyzing"
+        : draft.analysis
+          ? "review"
+          : "failed",
       example: draft.example,
       candidates,
-      photos: draft.photos.map(makePhoto),
+      photos: [],
     };
     if (!draft.example) {
       try {
-        await saveMeetingToSupabase(meeting, draft, user.id, activeTeam.members);
+        await saveMeetingToSupabase(
+          meeting,
+          draft,
+          user.id,
+          activeTeam.members,
+        );
       } catch (error) {
         releaseUrl(meeting.fileUrl);
         throw new Error(meetingError("회의록 저장 실패", error));
       }
     }
-    setMeetings((items) => [meeting, ...items]);
+    // 회의록이 저장된 뒤 그 회의록에 사진을 연결한다.
+    const { photos, photoError } = await registerMeetingPhotos(
+      meeting,
+      draft.photos,
+      draft.photoConsent,
+    );
+    setMeetings((items) => [{ ...meeting, photos }, ...items]);
     go(
       draft.analysis || draft.example || draft.analysisError
         ? "review"
@@ -662,11 +753,12 @@ export default function App() {
       id,
     );
     setToast(
-      draft.example
-        ? "예시 분석 흐름을 시작했습니다."
-        : draft.analysis
-          ? `AI 분석이 완료됐습니다. 결정 ${candidates.filter((item) => item.kind !== "action_item").length}건과 후속 업무 ${candidates.filter((item) => item.kind === "action_item").length}건을 검토해 주세요.`
-          : "분석에 실패해 원본을 저장했습니다. 회의록 화면에서 분석을 다시 요청할 수 있습니다.",
+      photoError ??
+        (draft.example
+          ? "예시 분석 흐름을 시작했습니다."
+          : draft.analysis
+            ? `AI 분석이 완료됐습니다. 결정 ${candidates.filter((item) => item.kind !== "action_item").length}건과 후속 업무 ${candidates.filter((item) => item.kind === "action_item").length}건을 검토해 주세요.`
+            : "분석에 실패해 원본을 저장했습니다. 회의록 화면에서 분석을 다시 요청할 수 있습니다."),
     );
   }
   async function submitReview(meeting: Meeting) {
@@ -684,7 +776,9 @@ export default function App() {
       setToast("확정 항목의 프로젝트를 모두 선택해 주세요.");
       return;
     }
-    const nextStatus = meeting.candidates.some((candidate) => candidate.confirmed)
+    const nextStatus = meeting.candidates.some(
+      (candidate) => candidate.confirmed,
+    )
       ? "submitted"
       : "done";
 
@@ -722,18 +816,24 @@ export default function App() {
     try {
       const fileUrl = await fetchMeetingFileUrl(meeting.teamId, meeting.id);
       if (!fileUrl) {
-        throw new Error("원본 파일을 찾지 못했습니다. 파일을 다시 업로드해 주세요.");
+        throw new Error(
+          "원본 파일을 찾지 못했습니다. 파일을 다시 업로드해 주세요.",
+        );
       }
       const response = await fetch(fileUrl);
       if (!response.ok) throw new Error("원본 파일을 내려받지 못했습니다.");
       const blob = await response.blob();
       const file = new File([blob], meeting.fileName || "meeting", {
-        type: blob.type ||
+        type:
+          blob.type ||
           (/\.pdf$/i.test(meeting.fileName)
             ? "application/pdf"
             : "text/plain;charset=utf-8"),
       });
-      const analysis = await analyzeDocument(file, new AbortController().signal);
+      const analysis = await analyzeDocument(
+        file,
+        new AbortController().signal,
+      );
       const candidates = candidatesFromAnalysis(analysis, meeting.id);
       await persistMeetingAnalysis({
         meetingId: meeting.id,
@@ -774,10 +874,19 @@ export default function App() {
   }
 
   async function handleDeleteMeeting(meeting: Meeting) {
-    if (!hasTeam || meeting.teamId !== activeTeam.id || meeting.example || deletingMeetingId) {
+    if (
+      !hasTeam ||
+      meeting.teamId !== activeTeam.id ||
+      meeting.example ||
+      deletingMeetingId
+    ) {
       return;
     }
-    if (teamDecisions.some((decision) => decision.evidence.documentId === meeting.id)) {
+    if (
+      teamDecisions.some(
+        (decision) => decision.evidence.documentId === meeting.id,
+      )
+    ) {
       setToast("유효한 결정이 연결된 회의록은 삭제할 수 없습니다.");
       return;
     }
@@ -819,10 +928,18 @@ export default function App() {
     setDecisions((items) => items.filter((item) => item.id !== decision.id));
     try {
       const rows = await fetchTeamHistory(decision.teamId);
-      setHistory((items) => [...items.filter((item) => item.teamId !== decision.teamId), ...rows]);
+      setHistory((items) => [
+        ...items.filter((item) => item.teamId !== decision.teamId),
+        ...rows,
+      ]);
       setToast("결정을 무효 처리했습니다.");
     } catch (error) {
-      setToast(meetingError("결정은 무효 처리됐습니다. 이력을 보려면 화면을 새로고침해 주세요", error));
+      setToast(
+        meetingError(
+          "결정은 무효 처리됐습니다. 이력을 보려면 화면을 새로고침해 주세요",
+          error,
+        ),
+      );
     }
     return null;
   }
@@ -862,7 +979,10 @@ export default function App() {
         )
       : undefined;
     if (
-      (targetCandidate.projectId && !teamProjects.some((project) => project.id === targetCandidate.projectId)) ||
+      (targetCandidate.projectId &&
+        !teamProjects.some(
+          (project) => project.id === targetCandidate.projectId,
+        )) ||
       (previousDecisionId && !previous) ||
       (method !== "new" && !previous) ||
       (method === "new" && previous)
@@ -908,11 +1028,13 @@ export default function App() {
     if (method === "replace" && previous && targetMeeting.example) {
       // 예시 회의록 흐름: 데모 업무의 재검토 표시를 화면에서만 바꾼다.
       // 실제 회의록은 DB(tasks.recheck)와 알림 트리거가 처리한다 (SFR-017).
-      setTasks((items) => items.map((task) =>
-        task.teamId === activeTeam.id && task.decisionId === previous.id
-          ? { ...task, recheck: true }
-          : task,
-      ));
+      setTasks((items) =>
+        items.map((task) =>
+          task.teamId === activeTeam.id && task.decisionId === previous.id
+            ? { ...task, recheck: true }
+            : task,
+        ),
+      );
     }
 
     if (!targetMeeting.example) {
@@ -923,24 +1045,35 @@ export default function App() {
           fetchTeamHistory(savedTeamId),
           fetchTeamTasks(savedTeamId),
         ]);
-        setDecisions((items) => [...items.filter((item) => item.teamId !== savedTeamId), ...freshDecisions]);
-        setHistory((items) => [...items.filter((item) => item.teamId !== savedTeamId), ...freshHistory]);
-        setTasks((items) => [...items.filter((item) => item.teamId !== savedTeamId), ...freshTasks]);
+        setDecisions((items) => [
+          ...items.filter((item) => item.teamId !== savedTeamId),
+          ...freshDecisions,
+        ]);
+        setHistory((items) => [
+          ...items.filter((item) => item.teamId !== savedTeamId),
+          ...freshHistory,
+        ]);
+        setTasks((items) => [
+          ...items.filter((item) => item.teamId !== savedTeamId),
+          ...freshTasks,
+        ]);
         recordNotice(`${resolutionLabels[method]} 처리를 기록했습니다.`);
         refreshNotifications();
       } catch (error) {
         setDecisionsReadyTeamId(null);
-        setToast(meetingError("결정은 저장됐지만 변경 결과를 불러오지 못했습니다. 다시 접속해 주세요", error));
+        setToast(
+          meetingError(
+            "결정은 저장됐지만 변경 결과를 불러오지 못했습니다. 다시 접속해 주세요",
+            error,
+          ),
+        );
       }
       setDialog(null);
       return;
     }
 
     const nextDecision: Decision = {
-      id:
-        previous && method === "replace"
-          ? previous.id
-          : crypto.randomUUID(),
+      id: previous && method === "replace" ? previous.id : crypto.randomUUID(),
       teamId: activeTeam.id,
       title: targetCandidate.title,
       projectId: targetCandidate.projectId,
@@ -994,7 +1127,9 @@ export default function App() {
     reason: string,
   ) {
     if (!user || role !== "admin" || !taskTarget || !reason.trim()) return;
-    const meeting = teamMeetings.find((item) => item.id === taskTarget.meetingId);
+    const meeting = teamMeetings.find(
+      (item) => item.id === taskTarget.meetingId,
+    );
     const candidate = meeting?.candidates.find(
       (item) => item.id === taskTarget.candidateId,
     );
@@ -1005,7 +1140,9 @@ export default function App() {
       candidate.resolution ||
       meeting.status !== "submitted"
     ) {
-      setToast("처리할 수 있는 후속 업무 후보가 아닙니다. 화면을 다시 불러와 주세요.");
+      setToast(
+        "처리할 수 있는 후속 업무 후보가 아닙니다. 화면을 다시 불러와 주세요.",
+      );
       return;
     }
     try {
@@ -1049,7 +1186,10 @@ export default function App() {
       refreshNotifications();
     } catch (error) {
       setToast(
-        meetingError("후속 업무는 처리됐지만 업무 목록을 새로 불러오지 못했습니다", error),
+        meetingError(
+          "후속 업무는 처리됐지만 업무 목록을 새로 불러오지 못했습니다",
+          error,
+        ),
       );
     }
     setDialog(null);
@@ -1766,8 +1906,8 @@ export default function App() {
                 go={go}
               />
             )}
-            {route.page === "meetings" && (
-              meetingsLoading ? (
+            {route.page === "meetings" &&
+              (meetingsLoading ? (
                 <section className="card">
                   <p className="muted">회의록을 불러오는 중…</p>
                 </section>
@@ -1779,8 +1919,7 @@ export default function App() {
                   deletingMeetingId={deletingMeetingId}
                   onDelete={handleDeleteMeeting}
                 />
-              )
-            )}
+              ))}
             {route.page === "upload" && (
               <UploadPage onSave={saveDraft} onCancel={() => go("meetings")} />
             )}
@@ -1794,12 +1933,17 @@ export default function App() {
                 onSource={setSource}
                 deletingMeetingId={deletingMeetingId}
                 onDelete={handleDeleteMeeting}
-                onAddPhotos={(files) => {
-                  const photos = files.map(makePhoto);
+                onAddPhotos={async (files, consent) => {
+                  const { photos, photoError } = await registerMeetingPhotos(
+                    currentMeeting,
+                    files,
+                    consent,
+                  );
                   updateMeeting(currentMeeting.id, (meeting) => ({
                     ...meeting,
                     photos: [...meeting.photos, ...photos],
                   }));
+                  if (photoError) throw new Error(photoError);
                 }}
                 onPhotoChange={(photo) =>
                   updateMeeting(currentMeeting.id, (meeting) => ({
@@ -1811,10 +1955,17 @@ export default function App() {
                       : [...meeting.photos, photo],
                   }))
                 }
-                onPhotoDelete={(id) => {
-                  releaseUrl(
-                    currentMeeting.photos.find((photo) => photo.id === id)?.url,
+                onPhotoDelete={async (id) => {
+                  const photo = currentMeeting.photos.find(
+                    (item) => item.id === id,
                   );
+                  if (!photo) return;
+                  await deleteSavedMeetingPhoto(
+                    currentMeeting.teamId,
+                    currentMeeting.id,
+                    photo,
+                  );
+                  releaseUrl(photo.url);
                   updateMeeting(currentMeeting.id, (meeting) => ({
                     ...meeting,
                     photos: meeting.photos.filter((photo) => photo.id !== id),
@@ -1841,9 +1992,11 @@ export default function App() {
                     status,
                   }));
                   if (!currentMeeting.example) {
-                    void updateMeetingStatus(currentMeeting.id, status).catch(() => {
-                      setToast("상태 변경을 서버에 저장하지 못했습니다.");
-                    });
+                    void updateMeetingStatus(currentMeeting.id, status).catch(
+                      () => {
+                        setToast("상태 변경을 서버에 저장하지 못했습니다.");
+                      },
+                    );
                   }
                 }}
                 onEdit={(candidate) => {
@@ -2130,16 +2283,27 @@ function ResolveDialog({
     setComparison(null);
     setError("");
     setSelectedId("");
-    compareDecision(input.candidate, input.existing, input.meetings, request.signal)
+    compareDecision(
+      input.candidate,
+      input.existing,
+      input.meetings,
+      request.signal,
+    )
       .then((result) => {
         if (request.signal.aborted) return;
         setComparison(result);
         // 관련 결정이 여러 개면 사용자가 직접 비교 대상을 고른다.
-        setSelectedId(result.matches.length === 1 ? result.matches[0].decisionId : "");
+        setSelectedId(
+          result.matches.length === 1 ? result.matches[0].decisionId : "",
+        );
       })
       .catch((error: unknown) => {
         if (!request.signal.aborted) {
-          setError(error instanceof Error ? error.message : "결정 비교에 실패했습니다.");
+          setError(
+            error instanceof Error
+              ? error.message
+              : "결정 비교에 실패했습니다.",
+          );
         }
       });
     return () => request.abort();
@@ -2149,7 +2313,9 @@ function ResolveDialog({
     (match) => match.decisionId === selectedId,
   );
   const previous = selectedMatch
-    ? input.existing.find((decision) => decision.id === selectedMatch.decisionId)
+    ? input.existing.find(
+        (decision) => decision.id === selectedMatch.decisionId,
+      )
     : undefined;
   const needsSelection = !!comparison?.matches.length && !previous;
   const ready = !hasExisting || (!!comparison && !error && !needsSelection);
@@ -2164,7 +2330,9 @@ function ResolveDialog({
             : "결정 후보 검토"
       }
       wide
-      onClose={() => { if (!saving) onClose(); }}
+      onClose={() => {
+        if (!saving) onClose();
+      }}
     >
       <form
         className="stack"
@@ -2190,7 +2358,11 @@ function ResolveDialog({
             같은 업무에 대한 기존 결정을 찾고 차이점을 분석하고 있습니다.
           </p>
         )}
-        {error && <p className="error-message" role="alert">{error}</p>}
+        {error && (
+          <p className="error-message" role="alert">
+            {error}
+          </p>
+        )}
         {(error || comparison) && (
           <button
             type="button"
@@ -2208,10 +2380,15 @@ function ResolveDialog({
         {!!comparison?.matches.length && (
           <label className="field">
             <span>비교할 기존 결정</span>
-            <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
+            <select
+              value={selectedId}
+              onChange={(event) => setSelectedId(event.target.value)}
+            >
               <option value="">기존 결정을 선택하세요</option>
               {comparison.matches.map((match) => {
-                const decision = input.existing.find((item) => item.id === match.decisionId);
+                const decision = input.existing.find(
+                  (item) => item.id === match.decisionId,
+                );
                 return (
                   <option key={match.decisionId} value={match.decisionId}>
                     {comparisonLabels[match.relation]} · {decision?.title}
@@ -2227,25 +2404,41 @@ function ResolveDialog({
               <span className="badge badge-gray">기존 확정 결정</span>
               <h3>{previous.title}</h3>
               <p className="muted">
-                {previous.owner || "담당자 미확인"} · {previous.dueDate || "기한 미확인"}
+                {previous.owner || "담당자 미확인"} ·{" "}
+                {previous.dueDate || "기한 미확인"}
               </p>
-              <SourceButton source={previous.evidence} onSource={onSource} label="기존 결정 원문" />
+              <SourceButton
+                source={previous.evidence}
+                onSource={onSource}
+                label="기존 결정 원문"
+              />
             </section>
           )}
           <section className="comparison-card comparison-new">
             <span className="badge">새 결정 후보</span>
             <h3>{candidate.title}</h3>
             <p className="muted">
-              {candidate.owner || "담당자 미확인"} · {candidate.dueDate || "기한 미확인"}
+              {candidate.owner || "담당자 미확인"} ·{" "}
+              {candidate.dueDate || "기한 미확인"}
             </p>
-            <SourceButton source={candidate.evidence} onSource={onSource} label="새 후보 원문" />
+            <SourceButton
+              source={candidate.evidence}
+              onSource={onSource}
+              label="새 후보 원문"
+            />
           </section>
         </div>
         {comparison && (
           <div className="subtle-panel">
-            <strong>{selectedMatch ? comparisonLabels[selectedMatch.relation] : "AI 비교 결과"}</strong>
+            <strong>
+              {selectedMatch
+                ? comparisonLabels[selectedMatch.relation]
+                : "AI 비교 결과"}
+            </strong>
             <p>{selectedMatch?.reason ?? comparison.reason}</p>
-            {needsSelection && <p>관련 기존 결정 중 비교할 항목을 선택해 주세요.</p>}
+            {needsSelection && (
+              <p>관련 기존 결정 중 비교할 항목을 선택해 주세요.</p>
+            )}
           </div>
         )}
         {admin ? (
@@ -2253,22 +2446,29 @@ function ResolveDialog({
             {previous && (
               <fieldset className="resolution-options">
                 <legend>처리 방식 선택</legend>
-                {(["keep", "replace", "exception", "hold"] as const).map((value) => (
-                  <label key={value} className={method === value ? "selected" : ""}>
-                    <input
-                      type="radio"
-                      name="resolution"
-                      value={value}
-                      checked={method === value}
-                      onChange={() => setMethod(value)}
-                    />
-                    {resolutionLabels[value]}
-                  </label>
-                ))}
+                {(["keep", "replace", "exception", "hold"] as const).map(
+                  (value) => (
+                    <label
+                      key={value}
+                      className={method === value ? "selected" : ""}
+                    >
+                      <input
+                        type="radio"
+                        name="resolution"
+                        value={value}
+                        checked={method === value}
+                        onChange={() => setMethod(value)}
+                      />
+                      {resolutionLabels[value]}
+                    </label>
+                  ),
+                )}
               </fieldset>
             )}
             <label className="field">
-              <span>처리 사유 <span className="required">필수</span></span>
+              <span>
+                처리 사유 <span className="required">필수</span>
+              </span>
               <textarea
                 rows={3}
                 required
@@ -2282,17 +2482,26 @@ function ResolveDialog({
               />
             </label>
             <div className="row-actions">
-              <button className="button button-secondary" type="button" onClick={onClose} disabled={saving}>
+              <button
+                className="button button-secondary"
+                type="button"
+                onClick={onClose}
+                disabled={saving}
+              >
                 취소
               </button>
-              <button className="button button-primary" disabled={saving || !ready || !reason.trim()}>
+              <button
+                className="button button-primary"
+                disabled={saving || !ready || !reason.trim()}
+              >
                 {previous ? "선택한 방식으로 처리" : "현재 결정에 반영"}
               </button>
             </div>
           </>
         ) : (
           <p className="notice-message">
-            비교 내용과 원문을 확인할 수 있습니다. 최종 처리는 관리자 권한이 필요합니다.
+            비교 내용과 원문을 확인할 수 있습니다. 최종 처리는 관리자 권한이
+            필요합니다.
           </p>
         )}
       </form>
@@ -2350,9 +2559,8 @@ function TaskCandidateDialog({
         </div>
         <h3>{candidate.title}</h3>
         <p className="muted">
-          {meetingDate} · {meetingTitle} ·{" "}
-          {candidate.owner || "담당자 미확인"} ·{" "}
-          {candidate.dueDate || "기한 미확인"}
+          {meetingDate} · {meetingTitle} · {candidate.owner || "담당자 미확인"}{" "}
+          · {candidate.dueDate || "기한 미확인"}
         </p>
         <p className="muted">
           확정하면 “내 업무” 화면에 등록되고 담당자에게 알림이 갑니다. 제외하면

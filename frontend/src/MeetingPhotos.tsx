@@ -1,12 +1,35 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Modal from "./components/Modal";
 import { examplePhoto } from "./demo-data";
 import type { MeetingPhoto, Member } from "./demo-data";
+import {
+  getMeetingPhotoUrl,
+  isSupportedMeetingPhoto,
+  MEETING_PHOTO_ACCEPT,
+} from "./lib/meeting-photos";
 
-function PhotoPreview({ photo }: { photo: MeetingPhoto }) {
-  return photo.url ? (
-    <img className="meeting-photo" src={photo.url} alt={photo.name} />
-  ) : (
+function PhotoPreview({
+  photo,
+  url,
+  loading,
+}: {
+  photo: MeetingPhoto;
+  url?: string;
+  loading: boolean;
+}) {
+  if (url) {
+    return <img className="meeting-photo" src={url} alt={photo.name} />;
+  }
+
+  if (!photo.example) {
+    return (
+      <p className="muted">
+        {loading ? "사진을 불러오는 중입니다." : "사진을 열 수 없습니다."}
+      </p>
+    );
+  }
+
+  return (
     <div
       className="photo-placeholder"
       role="img"
@@ -31,23 +54,57 @@ function PhotoPreview({ photo }: { photo: MeetingPhoto }) {
 
 export default function MeetingPhotos({
   photos,
+  meetingLocation,
   members,
   onAdd,
   onChange,
   onDelete,
 }: {
   photos: MeetingPhoto[];
+  meetingLocation: string;
   members: Member[];
-  onAdd: (files: File[]) => void;
+  onAdd: (files: File[], consent: boolean) => Promise<void>;
   onChange: (photo: MeetingPhoto) => void;
-  onDelete: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
 }) {
   const [selectedId, setSelectedId] = useState(photos[0]?.id || "");
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [addingPhotos, setAddingPhotos] = useState(false);
+  const [removingPhoto, setRemovingPhoto] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [storedPreview, setStoredPreview] = useState<{
+    path: string;
+    url?: string;
+  }>();
+
   const selected = photos.find((photo) => photo.id === selectedId) || photos[0];
+  const previewPath = selected?.storagePath;
+
+  useEffect(() => {
+    if (!previewPath) return;
+
+    let current = true;
+    void getMeetingPhotoUrl(previewPath).then(
+      (url) => {
+        if (current) setStoredPreview({ path: previewPath, url });
+      },
+      () => {
+        if (current) setStoredPreview({ path: previewPath });
+      },
+    );
+
+    return () => {
+      current = false;
+    };
+  }, [previewPath]);
+
+  const previewLoading = !!previewPath && storedPreview?.path !== previewPath;
+  const previewUrl =
+    selected?.url ??
+    (storedPreview?.path === previewPath ? storedPreview?.url : undefined);
   const missing = selected
     ? members.filter(
         (member) => !selected.faces.some((face) => face.name === member.name),
@@ -99,46 +156,56 @@ export default function MeetingPhotos({
             checked={consent}
             onChange={(event) => setConsent(event.target.checked)}
           />
-          회의 사진의 얼굴·위치 정보 처리 안내를 확인했습니다.
+          사진 원본과 촬영 정보 저장에 동의합니다.
         </label>
+
         <p className="small muted">
-          목적: 사진 속 인물 및 촬영 정보 확인. 시연 파일은 외부로 전송되지
-          않으며 새로고침 시 사라집니다. 등록된 얼굴·위치 정보는 사진 삭제로
-          제거할 수 있습니다.
+          실제 회의록에 추가한 사진 원본과 촬영 일시·GPS 좌표는 팀에 저장됩니다.
+          사진을 삭제하면 함께 제거됩니다.
         </p>
+
         <div className="row-actions">
           <label
-            className={`button button-secondary file-label ${!consent ? "is-disabled" : ""}`}
+            className={`button button-secondary file-label ${!consent || addingPhotos ? "is-disabled" : ""}`}
           >
-            JPEG 사진 추가
+            {addingPhotos ? "사진 저장 중" : "사진 추가"}
             <input
-              aria-label="회의 JPEG 사진 추가"
-              disabled={!consent}
+              aria-label="회의 사진 추가"
+              disabled={!consent || addingPhotos}
               type="file"
-              accept=".jpg,.jpeg,image/jpeg"
+              accept={MEETING_PHOTO_ACCEPT}
               multiple
               hidden
-              onChange={(event) => {
-                const files = Array.from(event.target.files || []);
+              onChange={async (event) => {
+                const files = Array.from(event.target.files ?? []);
                 event.target.value = "";
-                if (
-                  files.some(
-                    (file) =>
-                      !/\.jpe?g$/i.test(file.name) ||
-                      file.type !== "image/jpeg" ||
-                      !file.size ||
-                      file.size > 10 * 1024 * 1024,
-                  )
-                ) {
-                  setError("10 MB 이하의 원본 JPEG 사진을 선택해 주세요.");
+
+                if (files.some((file) => !isSupportedMeetingPhoto(file))) {
+                  setError(
+                    "10 MB 이하의 원본 JPEG 또는 PNG 사진을 선택해 주세요.",
+                  );
                   return;
                 }
+
+                if (!consent || !files.length) return;
+
                 setError("");
-                onAdd(files);
+                setAddingPhotos(true);
+                try {
+                  await onAdd(files, consent);
+                } catch (error) {
+                  setError(
+                    error instanceof Error
+                      ? error.message
+                      : "사진을 저장하지 못했습니다.",
+                  );
+                } finally {
+                  setAddingPhotos(false);
+                }
               }}
             />
           </label>
-          <span className="small muted">원본 JPEG · 사진당 최대 10 MB</span>
+          <span className="small muted">원본 JPEG·PNG · 사진당 최대 10 MB</span>
         </div>
         {error && (
           <p className="error-message" role="alert">
@@ -174,7 +241,11 @@ export default function MeetingPhotos({
                   크게 보기 ↗
                 </button>
               </div>
-              <PhotoPreview photo={selected} />
+              <PhotoPreview
+                photo={selected}
+                url={previewUrl}
+                loading={previewLoading}
+              />
               <p className="small muted">
                 {selected.example
                   ? "아래 인물·촬영 정보는 화면 시연용 가상 결과입니다."
@@ -186,7 +257,10 @@ export default function MeetingPhotos({
                 </span>
                 <button
                   className="text-button danger-text"
-                  onClick={() => setDeleting(true)}
+                  onClick={() => {
+                    setDeleteError("");
+                    setDeleting(true);
+                  }}
                 >
                   사진 삭제·동의 철회
                 </button>
@@ -203,44 +277,44 @@ export default function MeetingPhotos({
                 <div>
                   <dt>촬영 날짜·시간</dt>
                   <dd>
-                    {selected.example
-                      ? selected.takenAt || "확인 불가"
-                      : "분석 대기"}
+                    {(selected.takenAtLocal ?? selected.takenAt)?.replace(
+                      "T",
+                      " ",
+                    ) || "확인 불가"}
                   </dd>
                 </div>
+
                 <div>
                   <dt>시간대</dt>
-                  <dd>
-                    {selected.example
-                      ? selected.timezone || "확인 불가"
-                      : "분석 대기"}
-                  </dd>
+                  <dd>{selected.timezone || "시간대 미확인"}</dd>
                 </div>
+
                 <div>
                   <dt>GPS 좌표</dt>
                   <dd>
-                    {!selected.example
-                      ? "분석 대기"
-                      : selected.latitude !== undefined
-                        ? `${selected.latitude}, ${selected.longitude}`
-                        : "위치 정보 없음"}
+                    {selected.latitude !== undefined &&
+                    selected.longitude !== undefined
+                      ? `${selected.latitude.toFixed(6)}, ${selected.longitude.toFixed(6)}`
+                      : "사진에 GPS 정보가 없습니다."}
                   </dd>
                 </div>
+
                 <div>
                   <dt>촬영 주소</dt>
                   <dd>
-                    {!selected.example
-                      ? "분석 대기"
-                      : selected.addressStatus === "found"
-                        ? selected.address
-                        : selected.addressStatus === "error"
-                          ? "주소 조회 실패"
-                          : selected.addressStatus === "not-found"
-                            ? "해당 좌표의 주소를 찾지 못했습니다"
+                    {selected.addressStatus === "found"
+                      ? selected.address
+                      : selected.addressStatus === "error"
+                        ? "주소 조회 실패"
+                        : selected.addressStatus === "not-found"
+                          ? "해당 좌표의 주소를 찾지 못했습니다"
+                          : selected.latitude !== undefined
+                            ? "주소 미변환"
                             : "위치 정보 없음"}
                   </dd>
                 </div>
               </dl>
+
               <div className="location-card">
                 <span className="location-pin" aria-hidden="true">
                   ⌖
@@ -248,13 +322,20 @@ export default function MeetingPhotos({
                 <div>
                   <strong>사진 촬영 위치</strong>
                   <p className="muted">
-                    {!selected.example
-                      ? "촬영 위치는 분석 연결 후 확인할 수 있습니다."
-                      : selected.address ||
-                        (selected.latitude !== undefined
-                          ? "좌표는 확인되었으나 주소가 없습니다."
-                          : "사진에 GPS 정보가 없습니다.")}
+                    {selected.address ||
+                      (selected.latitude !== undefined &&
+                      selected.longitude !== undefined
+                        ? "사진에서 GPS 좌표를 확인했습니다."
+                        : "사진에 GPS 정보가 없습니다.")}
                   </p>
+                  {!selected.example &&
+                    meetingLocation &&
+                    (selected.latitude === undefined ||
+                      selected.longitude === undefined) && (
+                      <p className="small muted">
+                        회의록 장소 (참고) · {meetingLocation}
+                      </p>
+                    )}
                 </div>
               </div>
               {selected.example && (
@@ -405,7 +486,11 @@ export default function MeetingPhotos({
               wide
               onClose={() => setExpanded(false)}
             >
-              <PhotoPreview photo={selected} />
+              <PhotoPreview
+                photo={selected}
+                url={previewUrl}
+                loading={previewLoading}
+              />
               <p className="page-note">
                 {selected.example
                   ? "실제 사진이 아닌 화면 배치 예시입니다."
@@ -416,28 +501,49 @@ export default function MeetingPhotos({
           {deleting && (
             <Modal
               title="사진과 관련 정보를 삭제할까요?"
-              onClose={() => setDeleting(false)}
+              onClose={() => {
+                if (!removingPhoto) setDeleting(false);
+              }}
             >
               <div className="stack">
-                <p>
-                  해당 사진과 얼굴 대조 결과, 촬영 일시·위치 정보를 시연
-                  데이터에서 함께 제거합니다.
-                </p>
+                <p>사진과 이 사진의 등록 정보를 삭제합니다.</p>
+
+                {deleteError && (
+                  <p className="error-message" role="alert">
+                    {deleteError}
+                  </p>
+                )}
+
                 <div className="row-actions">
                   <button
                     className="button button-secondary"
+                    disabled={removingPhoto}
                     onClick={() => setDeleting(false)}
                   >
                     취소
                   </button>
+
                   <button
                     className="button button-danger"
-                    onClick={() => {
-                      onDelete(selected.id);
-                      setDeleting(false);
+                    disabled={removingPhoto}
+                    onClick={async () => {
+                      setDeleteError("");
+                      setRemovingPhoto(true);
+                      try {
+                        await onDelete(selected.id);
+                        setDeleting(false);
+                      } catch (error) {
+                        setDeleteError(
+                          error instanceof Error
+                            ? error.message
+                            : "사진을 삭제하지 못했습니다.",
+                        );
+                      } finally {
+                        setRemovingPhoto(false);
+                      }
                     }}
                   >
-                    삭제·동의 철회
+                    {removingPhoto ? "삭제 중" : "삭제·동의 철회"}
                   </button>
                 </div>
               </div>

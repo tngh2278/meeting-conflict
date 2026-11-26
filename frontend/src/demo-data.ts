@@ -65,11 +65,13 @@ export type MeetingPhoto = {
   reviewed: boolean;
   consent: boolean;
   takenAt?: string;
+  takenAtLocal?: string;
   timezone?: string;
   latitude?: number;
   longitude?: number;
   address?: string;
-  addressStatus: "found" | "missing-gps" | "not-found" | "error";
+  storagePath?: string;
+  addressStatus?: "found" | "missing-gps" | "not-found" | "error";
   faces: FaceMatch[];
 };
 export type Meeting = {
@@ -77,6 +79,8 @@ export type Meeting = {
   teamId: string;
   title: string;
   date: string;
+  time?: string;
+  attendees?: string[];
   location: string;
   author: string;
   fileName: string;
@@ -133,6 +137,8 @@ export type Task = {
   meetingId?: string;
 };
 export type UploadDraft = {
+  time?: string;
+  attendees?: string[];
   file: File;
   title: string;
   date: string;
