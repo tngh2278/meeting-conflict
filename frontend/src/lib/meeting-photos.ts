@@ -161,6 +161,53 @@ export function toMeetingPhoto(row: MeetingPhotoRow): MeetingPhoto {
   };
 }
 
+export type PhotoAddressResult = {
+  status: "found" | "missing-gps" | "not-found" | "error";
+  address: string | null;
+};
+
+async function fetchPhotoLocation(
+  photoId: string,
+  resource: "address" | "map",
+  signal: AbortSignal,
+): Promise<Response> {
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim().replace(
+    /\/+$/,
+    "",
+  );
+  if (!apiBaseUrl) throw new Error("백엔드 API 주소를 확인해 주세요.");
+
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session) throw new Error("로그인이 만료됐습니다.");
+
+  return fetch(
+    `${apiBaseUrl}/api/photos/${encodeURIComponent(photoId)}/${resource}`,
+    {
+      headers: { Authorization: `Bearer ${data.session.access_token}` },
+      cache: "no-store",
+      signal: AbortSignal.any([signal, AbortSignal.timeout(65_000)]),
+    },
+  );
+}
+
+export async function getMeetingPhotoAddress(
+  photoId: string,
+  signal: AbortSignal,
+): Promise<PhotoAddressResult> {
+  const response = await fetchPhotoLocation(photoId, "address", signal);
+  if (!response.ok) throw new Error("주소 조회에 실패했습니다.");
+  return response.json();
+}
+
+export async function getMeetingPhotoMap(
+  photoId: string,
+  signal: AbortSignal,
+): Promise<Blob> {
+  const response = await fetchPhotoLocation(photoId, "map", signal);
+  if (!response.ok) throw new Error("지도를 불러오지 못했습니다.");
+  return response.blob();
+}
+
 export async function getMeetingPhotoUrl(path: string) {
   const { data, error } = await supabase.storage
     .from(PHOTO_BUCKET)

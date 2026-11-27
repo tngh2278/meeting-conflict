@@ -3,9 +3,12 @@ import Modal from "./components/Modal";
 import { examplePhoto } from "./demo-data";
 import type { MeetingPhoto, Member } from "./demo-data";
 import {
+  getMeetingPhotoAddress,
+  getMeetingPhotoMap,
   getMeetingPhotoUrl,
   isSupportedMeetingPhoto,
   MEETING_PHOTO_ACCEPT,
+  type PhotoAddressResult,
 } from "./lib/meeting-photos";
 
 function PhotoPreview({
@@ -49,6 +52,72 @@ function PhotoPreview({
         회의 사진 배치 예시 · 실제 인물 아님
       </span>
     </div>
+  );
+}
+
+function LivePhotoAddress({ photoId }: { photoId: string }) {
+  const [result, setResult] = useState<PhotoAddressResult>();
+
+  useEffect(() => {
+    const request = new AbortController();
+
+    void getMeetingPhotoAddress(photoId, request.signal).then(
+      (value) => {
+        if (!request.signal.aborted) setResult(value);
+      },
+      () => {
+        if (!request.signal.aborted) {
+          setResult({ status: "error", address: null });
+        }
+      },
+    );
+
+    return () => request.abort();
+  }, [photoId]);
+
+  if (!result) return "주소 조회 중…";
+  if (result.status === "found" && result.address) return result.address;
+  if (result.status === "missing-gps") return "위치 정보 없음";
+  if (result.status === "not-found")
+    return "해당 좌표의 주소를 찾지 못했습니다";
+  return "주소 조회 실패";
+}
+
+function LivePhotoMap({ photoId }: { photoId: string }) {
+  const [mapUrl, setMapUrl] = useState<string | null>();
+
+  useEffect(() => {
+    const request = new AbortController();
+    let objectUrl: string | undefined;
+
+    void getMeetingPhotoMap(photoId, request.signal).then(
+      (image) => {
+        if (request.signal.aborted) return;
+        objectUrl = URL.createObjectURL(image);
+        setMapUrl(objectUrl);
+      },
+      () => {
+        if (!request.signal.aborted) setMapUrl(null);
+      },
+    );
+
+    return () => {
+      request.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [photoId]);
+
+  if (mapUrl === undefined) return <p className="muted">지도 불러오는 중…</p>;
+  if (mapUrl === null)
+    return <p className="muted">지도를 불러오지 못했습니다.</p>;
+
+  return (
+    <img
+      className="photo-location-map"
+      src={mapUrl}
+      alt="촬영 위치에 핀이 표시된 카카오 지도"
+      onError={() => setMapUrl(null)}
+    />
   );
 }
 
@@ -161,7 +230,8 @@ export default function MeetingPhotos({
 
         <p className="small muted">
           실제 회의록에 추가한 사진 원본과 촬영 일시·GPS 좌표는 팀에 저장됩니다.
-          사진을 삭제하면 함께 제거됩니다.
+          사진을 삭제하면 함께 제거됩니다. 촬영 주소나 지도를 조회할 때는 사진의
+          GPS 좌표를 카카오에 보냅니다.
         </p>
 
         <div className="row-actions">
@@ -301,16 +371,26 @@ export default function MeetingPhotos({
 
                 <div>
                   <dt>촬영 주소</dt>
-                  <dd>
-                    {selected.addressStatus === "found"
-                      ? selected.address
-                      : selected.addressStatus === "error"
-                        ? "주소 조회 실패"
-                        : selected.addressStatus === "not-found"
-                          ? "해당 좌표의 주소를 찾지 못했습니다"
-                          : selected.latitude !== undefined
-                            ? "주소 미변환"
-                            : "위치 정보 없음"}
+                  <dd aria-live="polite">
+                    {selected.example ? (
+                      selected.addressStatus === "found" ? (
+                        selected.address
+                      ) : selected.addressStatus === "error" ? (
+                        "주소 조회 실패"
+                      ) : selected.addressStatus === "not-found" ? (
+                        "해당 좌표의 주소를 찾지 못했습니다"
+                      ) : (
+                        "위치 정보 없음"
+                      )
+                    ) : selected.latitude !== undefined &&
+                      selected.longitude !== undefined ? (
+                      <LivePhotoAddress
+                        key={selected.id}
+                        photoId={selected.id}
+                      />
+                    ) : (
+                      "위치 정보 없음"
+                    )}
                   </dd>
                 </div>
               </dl>
@@ -328,6 +408,11 @@ export default function MeetingPhotos({
                         ? "사진에서 GPS 좌표를 확인했습니다."
                         : "사진에 GPS 정보가 없습니다.")}
                   </p>
+                  {!selected.example &&
+                    selected.latitude !== undefined &&
+                    selected.longitude !== undefined && (
+                      <LivePhotoMap key={selected.id} photoId={selected.id} />
+                    )}
                   {!selected.example &&
                     meetingLocation &&
                     (selected.latitude === undefined ||

@@ -816,6 +816,19 @@ mark {
 .location-card p {
   font-size: 12px;
 }
+.location-card > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.photo-location-map {
+  display: block;
+  width: 100%;
+  max-width: 560px;
+  height: auto;
+  margin-top: 10px;
+  border-radius: 6px;
+}
 .face-row {
   display: flex;
   align-items: center;
