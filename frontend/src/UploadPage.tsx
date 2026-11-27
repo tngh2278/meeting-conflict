@@ -1,7 +1,15 @@
+import {
+  isSupportedMeetingPhoto,
+  MEETING_PHOTO_ACCEPT,
+} from "./lib/meeting-photos";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import Modal from "./components/Modal";
-import { analyzeDocument, type MeetingAnalysis } from "./document-api";
+import {
+  analyzeDocument,
+  extractMeetingInfo,
+  type MeetingAnalysis,
+} from "./document-api";
 import { DEMO_DATE, newParagraphs } from "./demo-data";
 import type { UploadDraft } from "./demo-data";
 
@@ -21,7 +29,11 @@ function UploadPage({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [meetingTitle, setMeetingTitle] = useState("");
-  const [meetingDate, setMeetingDate] = useState(DEMO_DATE);
+  const [meetingDate, setMeetingDate] = useState("");
+  const [meetingTime, setMeetingTime] = useState("");
+  const [attendeeText, setAttendeeText] = useState("");
+  const [classifying, setClassifying] = useState(false);
+  const [infoNote, setInfoNote] = useState("");
   const [tags, setTags] = useState("");
   const [error, setError] = useState("");
   const [location, setLocation] = useState("");
@@ -32,10 +44,13 @@ function UploadPage({
   const [photoConsent, setPhotoConsent] = useState(false);
   const [uploading, setUploading] = useState(false);
 
-  useEffect(() => () => {
-    URL.revokeObjectURL(previewRef.current);
-    uploadRequest.current?.abort();
-  }, []);
+  useEffect(
+    () => () => {
+      URL.revokeObjectURL(previewRef.current);
+      uploadRequest.current?.abort();
+    },
+    [],
+  );
 
   function selectFile(file: File) {
     setError("");
@@ -63,6 +78,13 @@ function UploadPage({
       return;
     }
 
+    setInfoNote("");
+    if (selectedFile) {
+      setMeetingDate("");
+      setMeetingTime("");
+      setLocation("");
+      setAttendeeText("");
+    }
     setSelectedFile(file);
     const isPdf = /\.pdf$/i.test(file.name);
     const url = URL.createObjectURL(
@@ -101,7 +123,10 @@ function UploadPage({
     setPreviewUrl("");
     setPreviewText("");
     setMeetingTitle("");
-    setMeetingDate(DEMO_DATE);
+    setMeetingDate("");
+    setMeetingTime("");
+    setAttendeeText("");
+    setInfoNote("");
     setTags("");
     setError("");
     setLocation("");
@@ -110,6 +135,49 @@ function UploadPage({
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+  }
+
+  async function handleExtractMeetingInfo() {
+    if (!selectedFile || example || uploadRequest.current) return;
+
+    setError("");
+    setInfoNote("");
+
+    const request = new AbortController();
+    uploadRequest.current = request;
+    setClassifying(true);
+
+    try {
+      const info = await extractMeetingInfo(selectedFile, request.signal);
+      if (request.signal.aborted) return;
+
+      // 사용자가 입력한 내용은 유지하고 빈 칸만 채운다.
+      setMeetingDate((current) => current || info.date || "");
+      setMeetingTime((current) => current || info.time || "");
+      setLocation((current) =>
+        current.trim() ? current : info.location || "",
+      );
+      setAttendeeText((current) =>
+        current.trim() ? current : info.attendees.join(", "),
+      );
+
+      setInfoNote(
+        info.date || info.time || info.location || info.attendees.length
+          ? "문서에서 기본 정보를 읽었습니다. 입력란을 확인해 주세요."
+          : "문서에서 기본 정보를 찾지 못했습니다. 직접 입력해 주세요.",
+      );
+    } catch (error) {
+      if (!request.signal.aborted) {
+        setError(
+          error instanceof Error
+            ? error.message
+            : "회의 기본 정보를 읽지 못했습니다.",
+        );
+      }
+    } finally {
+      uploadRequest.current = null;
+      if (!request.signal.aborted) setClassifying(false);
     }
   }
 
@@ -134,7 +202,7 @@ function UploadPage({
     }
 
     if (photos.length && !photoConsent) {
-      setError("회의 사진의 얼굴·위치 정보 처리 안내를 확인해 주세요.");
+      setError("사진 원본과 촬영 정보 저장에 동의해 주세요.");
       return;
     }
     const request = new AbortController();
@@ -150,15 +218,25 @@ function UploadPage({
           // 취소가 아니면 분석 실패를 기록하고 원본부터 저장한다.
           // 실패한 회의록은 상세 화면에서 분석을 다시 요청할 수 있다 (SFR-027).
           if (request.signal.aborted) return;
-          analysisError = analyzeError instanceof Error
-            ? analyzeError.message
-            : "회의록 분석에 실패했습니다.";
+          analysisError =
+            analyzeError instanceof Error
+              ? analyzeError.message
+              : "회의록 분석에 실패했습니다.";
         }
       }
       await onSave({
         file: selectedFile,
         title: meetingTitle.trim(),
         date: meetingDate,
+        time: meetingTime,
+        attendees: [
+          ...new Set(
+            attendeeText
+              .split(/[,，、;·]/)
+              .map((name) => name.trim())
+              .filter(Boolean),
+          ),
+        ],
         location,
         tags,
         example,
@@ -170,7 +248,11 @@ function UploadPage({
       });
     } catch (saveError) {
       if (!request.signal.aborted) {
-        setError(saveError instanceof Error ? saveError.message : "회의록 저장에 실패했습니다. 다시 시도해 주세요.");
+        setError(
+          saveError instanceof Error
+            ? saveError.message
+            : "회의록 저장에 실패했습니다. 다시 시도해 주세요.",
+        );
       }
     } finally {
       uploadRequest.current = null;
@@ -182,193 +264,244 @@ function UploadPage({
     <>
       <div className="page-heading">
         <h1>회의록 등록</h1>
-        <p>회의록에서 결정 사항·담당자·마감일을 추출하고 원문과 함께 확인합니다.</p>
+        <p>
+          회의록에서 결정 사항·담당자·마감일을 추출하고 원문과 함께 확인합니다.
+        </p>
       </div>
 
-      <form className="upload-form" onSubmit={handleSubmit} aria-busy={uploading}>
-        <fieldset className="upload-form upload-fields" disabled={uploading}>
-        <section className="upload-card" aria-labelledby="file-heading">
-          <h2 id="file-heading">
-            {selectedFile ? selectedFile.name : "회의록 파일을 선택하세요"}
-          </h2>
+      <form
+        className="upload-form"
+        onSubmit={handleSubmit}
+        aria-busy={uploading || classifying}
+      >
+        <fieldset
+          className="upload-form upload-fields"
+          disabled={uploading || classifying}
+        >
+          <section className="upload-card" aria-labelledby="file-heading">
+            <h2 id="file-heading">
+              {selectedFile ? selectedFile.name : "회의록 파일을 선택하세요"}
+            </h2>
 
-          <p className="file-description">
-            {selectedFile
-              ? `${selectedFile.name.split(".").pop()?.toUpperCase()} · ${(selectedFile.size / 1024).toFixed(1)} KB · 선택 완료`
-              : "텍스트가 있는 PDF 또는 TXT · 최대 10 MB"}
-          </p>
+            <p className="file-description">
+              {selectedFile
+                ? `${selectedFile.name.split(".").pop()?.toUpperCase()} · ${(selectedFile.size / 1024).toFixed(1)} KB · 선택 완료`
+                : "텍스트가 있는 PDF 또는 TXT · 최대 10 MB"}
+            </p>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.txt"
-            aria-label="회의록 파일 선택"
-            hidden
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0];
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.txt"
+              aria-label="회의록 파일 선택"
+              hidden
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
 
-              if (file) {
-                selectFile(file);
-              }
+                if (file) {
+                  selectFile(file);
+                }
 
-              event.currentTarget.value = "";
-            }}
-          />
+                event.currentTarget.value = "";
+              }}
+            />
 
-          <div className="file-actions">
-            <button
-              type="button"
-              className="button button-secondary file-button"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              {selectedFile ? "파일 다시 선택" : "파일 선택"}
-            </button>
-
-            <button
-              type="button"
-              className="button button-secondary example-button"
-              onClick={loadExample}
-            >
-              예시 회의록 불러오기
-            </button>
-
-            {selectedFile && previewUrl && (
+            <div className="file-actions">
               <button
                 type="button"
                 className="button button-secondary file-button"
-                onClick={() => setPreviewOpen(true)}
+                onClick={() => fileInputRef.current?.click()}
               >
-                원문 미리보기
+                {selectedFile ? "파일 다시 선택" : "파일 선택"}
               </button>
-            )}
-          </div>
-        </section>
 
-        <div className="field-row">
-          <div className="field">
-            <label htmlFor="meeting-title">회의 제목</label>
-            <input
-              id="meeting-title"
-              type="text"
-              placeholder="행사 준비 회의"
-              value={meetingTitle}
-              onChange={(event) => setMeetingTitle(event.target.value)}
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="meeting-date">회의일</label>
-            <input
-              id="meeting-date"
-              type="date"
-              value={meetingDate}
-              onChange={(event) => setMeetingDate(event.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="field">
-          <label htmlFor="meeting-location">
-            회의 장소 <span className="muted">선택</span>
-          </label>
-          <input
-            id="meeting-location"
-            value={location}
-            onChange={(event) => setLocation(event.target.value)}
-            placeholder="사용자가 확인한 회의 장소"
-          />
-        </div>
-
-        <div className="field">
-          <label htmlFor="meeting-tags">태그</label>
-          <input
-            id="meeting-tags"
-            type="text"
-            placeholder="#행사준비  #마감변경"
-            value={tags}
-            onChange={(event) => setTags(event.target.value)}
-          />
-        </div>
-
-        <section className="card stack" aria-labelledby="photo-upload-heading">
-          <div>
-            <h2 id="photo-upload-heading">
-              회의 사진 첨부 <span className="muted small">선택</span>
-            </h2>
-            <p className="muted">
-              원본 JPEG 사진을 해당 회의록에 연결합니다. 사진이 없어도 문서를
-              등록할 수 있습니다.
-            </p>
-          </div>
-          <label className="button button-secondary file-label">
-            사진 선택
-            <input
-              hidden
-              type="file"
-              accept=".jpg,.jpeg,image/jpeg"
-              multiple
-              onChange={(event) => {
-                const selected = Array.from(event.target.files ?? []);
-                event.target.value = "";
-                if (
-                  selected.some(
-                    (file) =>
-                      !/\.jpe?g$/i.test(file.name) ||
-                      file.type !== "image/jpeg" ||
-                      file.size === 0 ||
-                      file.size > MAX_FILE_SIZE,
-                  )
-                ) {
-                  setError(
-                    "회의 사진은 10 MB 이하의 원본 JPEG 파일만 선택할 수 있습니다.",
-                  );
-                  return;
-                }
-                setError("");
-                setPhotos((previous) => [...previous, ...selected]);
-              }}
-            />
-          </label>
-          {photos.map((photo, index) => (
-            <div
-              className="row-between file-row"
-              key={`${photo.name}-${index}`}
-            >
-              <span>
-                {photo.name}{" "}
-                <span className="muted">
-                  · {(photo.size / 1024).toFixed(0)} KB
-                </span>
-              </span>
               <button
                 type="button"
-                className="text-button danger-text"
-                onClick={() =>
-                  setPhotos((items) => items.filter((_, i) => i !== index))
-                }
+                className="button button-secondary example-button"
+                onClick={loadExample}
               >
-                제거
+                예시 회의록 불러오기
               </button>
+
+              {selectedFile && previewUrl && (
+                <button
+                  type="button"
+                  className="button button-secondary file-button"
+                  onClick={() => setPreviewOpen(true)}
+                >
+                  원문 미리보기
+                </button>
+              )}
             </div>
-          ))}
-          <label className="check-line">
+          </section>
+
+          <div className="row-actions">
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={!selectedFile || example}
+              onClick={handleExtractMeetingInfo}
+            >
+              {classifying ? "기본 정보 읽는 중…" : "기본 정보 자동 채우기"}
+            </button>
+          </div>
+
+          {infoNote && (
+            <p className="small muted" role="status">
+              {infoNote}
+            </p>
+          )}
+
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="meeting-title">회의 제목</label>
+              <input
+                id="meeting-title"
+                type="text"
+                placeholder="행사 준비 회의"
+                value={meetingTitle}
+                onChange={(event) => setMeetingTitle(event.target.value)}
+              />
+            </div>
+
+            <div className="field">
+              <label htmlFor="meeting-date">회의일</label>
+              <input
+                id="meeting-date"
+                type="date"
+                value={meetingDate}
+                onChange={(event) => setMeetingDate(event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="field">
+            <label htmlFor="meeting-location">
+              회의 장소 <span className="muted">선택</span>
+            </label>
             <input
-              type="checkbox"
-              checked={photoConsent}
-              onChange={(event) => setPhotoConsent(event.target.checked)}
+              id="meeting-location"
+              value={location}
+              onChange={(event) => setLocation(event.target.value)}
+              placeholder="사용자가 확인한 회의 장소"
             />
-            얼굴·위치 정보 처리 안내를 확인했습니다.
-          </label>
-          <p className="small muted">
-            처리 목적: 회의 사진의 인물·촬영 정보 확인. 현재 회의 사진은
-            외부로 보내지 않으며, 새로고침 시 선택한 파일과 정보가 사라집니다.
-          </p>
-        </section>
+          </div>
+
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="meeting-time">회의 시작 시각</label>
+              <input
+                id="meeting-time"
+                type="time"
+                value={meetingTime}
+                onChange={(event) => setMeetingTime(event.target.value)}
+              />
+            </div>
+
+            <div className="field">
+              <label htmlFor="meeting-attendees">참석자</label>
+              <input
+                id="meeting-attendees"
+                value={attendeeText}
+                onChange={(event) => setAttendeeText(event.target.value)}
+                placeholder="김팀장, 박대리, 최사원"
+              />
+            </div>
+          </div>
+
+          <div className="field">
+            <label htmlFor="meeting-tags">태그</label>
+            <input
+              id="meeting-tags"
+              type="text"
+              placeholder="#행사준비  #마감변경"
+              value={tags}
+              onChange={(event) => setTags(event.target.value)}
+            />
+          </div>
+
+          <section
+            className="card stack"
+            aria-labelledby="photo-upload-heading"
+          >
+            <div>
+              <h2 id="photo-upload-heading">
+                회의 사진 첨부 <span className="muted small">선택</span>
+              </h2>
+              <p className="muted">
+                원본 JPEG 또는 PNG 사진을 회의록에 연결합니다. 사진 첨부는 선택
+                사항입니다.
+              </p>
+            </div>
+
+            <label className="button button-secondary file-label">
+              사진 선택
+              <input
+                hidden
+                type="file"
+                accept={MEETING_PHOTO_ACCEPT}
+                multiple
+                onChange={(event) => {
+                  const selected = Array.from(event.target.files ?? []);
+                  event.target.value = "";
+
+                  if (selected.some((file) => !isSupportedMeetingPhoto(file))) {
+                    setError(
+                      "회의 사진은 10 MB 이하의 원본 JPEG 또는 PNG 파일만 선택할 수 있습니다.",
+                    );
+                    return;
+                  }
+
+                  setError("");
+                  setPhotos((previous) => [...previous, ...selected]);
+                }}
+              />
+            </label>
+
+            {photos.map((photo, index) => (
+              <div
+                className="row-between file-row"
+                key={`${photo.name}-${index}`}
+              >
+                <span>
+                  {photo.name}{" "}
+                  <span className="muted">
+                    · {(photo.size / 1024).toFixed(0)} KB
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  className="text-button danger-text"
+                  onClick={() =>
+                    setPhotos((items) => items.filter((_, i) => i !== index))
+                  }
+                >
+                  제거
+                </button>
+              </div>
+            ))}
+
+            <label className="check-line">
+              <input
+                type="checkbox"
+                checked={photoConsent}
+                onChange={(event) => setPhotoConsent(event.target.checked)}
+              />
+              사진 원본과 촬영 정보 저장에 동의합니다.
+            </label>
+
+            <p className="small muted">
+              실제 회의록 등록 시 사진 원본을 서버로 보내 촬영 일시와 GPS 좌표를
+              읽습니다. 사진과 추출 정보는 팀에 저장되며 회의록에서 삭제할 수
+              있습니다.
+            </p>
+          </section>
         </fieldset>
 
         <p className="form-description">
-          직접 선택한 문서는 서버로 전송되고, 추출한 텍스트를 Gemini가 분석합니다.
-          회의록과 분석 결과는 현재 화면에 보관되며 새로고침하면 사라집니다.
+          직접 선택한 문서는 서버로 전송되고, 추출한 텍스트를 Gemini가
+          분석합니다. 회의록과 분석 결과는 현재 화면에 보관되며 새로고침하면
+          사라집니다.
         </p>
 
         {error && (
@@ -384,7 +517,8 @@ function UploadPage({
 
         {uploading && (
           <p className="notice-message" role="status">
-            결정 사항과 후속 업무를 분석하고 있습니다. 최대 1분 정도 걸릴 수 있습니다.
+            결정 사항과 후속 업무를 분석하고 있습니다. 최대 1분 정도 걸릴 수
+            있습니다.
           </p>
         )}
 
@@ -401,7 +535,11 @@ function UploadPage({
             취소
           </button>
 
-          <button type="submit" className="button button-primary submit-button" disabled={uploading}>
+          <button
+            type="submit"
+            className="button button-primary submit-button"
+            disabled={uploading || classifying}
+          >
             {uploading ? "분석 중…" : example ? "예시 분석 시작" : "분석 시작"}
           </button>
         </div>

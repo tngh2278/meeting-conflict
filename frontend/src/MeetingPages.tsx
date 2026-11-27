@@ -59,7 +59,8 @@ export function SourceButton({
       disabled={!source.quote}
       onClick={() => onSource(source)}
     >
-      {source.quote ? label : "원문 근거 확인 필요"} <span aria-hidden="true">↗</span>
+      {source.quote ? label : "원문 근거 확인 필요"}{" "}
+      <span aria-hidden="true">↗</span>
     </button>
   );
 }
@@ -130,7 +131,8 @@ export function SourceDocument({
       {meeting.format === "PDF" && meeting.fileUrl ? (
         <>
           <p className="small muted">
-            PDF 원본 미리보기입니다. 텍스트 추출 결과는 아래에서 확인할 수 있습니다.
+            PDF 원본 미리보기입니다. 텍스트 추출 결과는 아래에서 확인할 수
+            있습니다.
           </p>
           <iframe
             className="pdf-preview"
@@ -145,14 +147,31 @@ export function SourceDocument({
             <span>EXTRACTED TEXT</span>
             <h2>텍스트 추출 결과</h2>
             <p>
-              {meeting.format === "PDF" ? `${meeting.extractedDocument.pages.length}페이지 · ` : ""}
+              {meeting.format === "PDF"
+                ? `${meeting.extractedDocument.pages.length}페이지 · `
+                : ""}
               문단 {meeting.paragraphs.length}개
             </p>
           </div>
           {meeting.extractedDocument.pages.map((page, pageIndex) => (
-            <section key={pageIndex} aria-label={page.pageNumber === null ? "TXT 문서" : `${page.pageNumber}페이지`}>
-              <h3>{page.pageNumber === null ? "TXT 문서" : `${page.pageNumber}페이지`}</h3>
-              {!page.paragraphs.length && <p className="small muted">추출된 텍스트가 없는 페이지입니다.</p>}
+            <section
+              key={pageIndex}
+              aria-label={
+                page.pageNumber === null
+                  ? "TXT 문서"
+                  : `${page.pageNumber}페이지`
+              }
+            >
+              <h3>
+                {page.pageNumber === null
+                  ? "TXT 문서"
+                  : `${page.pageNumber}페이지`}
+              </h3>
+              {!page.paragraphs.length && (
+                <p className="small muted">
+                  추출된 텍스트가 없는 페이지입니다.
+                </p>
+              )}
               {page.paragraphs.map((paragraph) => (
                 <section
                   key={paragraph.paragraphNumber}
@@ -160,13 +179,21 @@ export function SourceDocument({
                   data-start-offset={paragraph.startOffset}
                   data-end-offset={paragraph.endOffset}
                 >
-                  <span className="paragraph-number" aria-label={`문단 ${paragraph.paragraphNumber}`}>
+                  <span
+                    className="paragraph-number"
+                    aria-label={`문단 ${paragraph.paragraphNumber}`}
+                  >
                     {String(paragraph.paragraphNumber).padStart(2, "0")}
                   </span>
                   <p>
-                    {source?.page === page.pageNumber && source.paragraph === paragraph.paragraphNumber ? (
-                      <mark aria-label="선택한 원문 근거">{paragraph.text}</mark>
-                    ) : paragraph.text}
+                    {source?.page === page.pageNumber &&
+                    source.paragraph === paragraph.paragraphNumber ? (
+                      <mark aria-label="선택한 원문 근거">
+                        {paragraph.text}
+                      </mark>
+                    ) : (
+                      paragraph.text
+                    )}
                   </p>
                 </section>
               ))}
@@ -202,9 +229,7 @@ export function SourceDocument({
           ))}
         </article>
       ) : null}
-      {source && (
-        <blockquote className="paper-text">{source.quote}</blockquote>
-      )}
+      {source && <blockquote className="paper-text">{source.quote}</blockquote>}
     </div>
   );
 }
@@ -399,7 +424,11 @@ function ProjectForm({
           프로젝트 추가
         </button>
       </div>
-      {error && <p className="error-message" role="alert">{error}</p>}
+      {error && (
+        <p className="error-message" role="alert">
+          {error}
+        </p>
+      )}
     </form>
   );
 }
@@ -585,7 +614,9 @@ export function MeetingList({
                           disabled={deletingMeetingId !== null}
                           onClick={() => onDelete(meeting)}
                         >
-                          {deletingMeetingId === meeting.id ? "삭제 중…" : "삭제"}
+                          {deletingMeetingId === meeting.id
+                            ? "삭제 중…"
+                            : "삭제"}
                         </button>
                       )}
                     </div>
@@ -633,9 +664,9 @@ export function MeetingDetail({
   onSource: (source: Evidence) => void;
   deletingMeetingId: string | null;
   onDelete: (meeting: Meeting) => void;
-  onAddPhotos: (files: File[]) => void;
+  onAddPhotos: (files: File[], consent: boolean) => Promise<void>;
   onPhotoChange: (photo: MeetingPhoto) => void;
-  onPhotoDelete: (id: string) => void;
+  onPhotoDelete: (id: string) => Promise<void>;
 }) {
   const [tab, setTab] = useState(initialTab || "source");
   return (
@@ -645,9 +676,12 @@ export function MeetingDetail({
       </button>
       <Heading
         title={meeting.title}
-        description={`${meeting.date} · ${meeting.author} · ${meeting.location || "장소 미입력"}`}
+        description={`${[meeting.date, meeting.time].filter(Boolean).join(" ")} · ${meeting.author} · ${meeting.location || "장소 미입력"}`}
         action={<StatusBadge status={meeting.status} />}
       />
+      {!!meeting.attendees?.length && (
+        <p className="small muted">참석자 · {meeting.attendees.join(", ")}</p>
+      )}
       <div className="tabs" role="tablist" aria-label="회의록 상세">
         <button
           role="tab"
@@ -729,6 +763,7 @@ export function MeetingDetail({
       {tab === "photos" && (
         <MeetingPhotos
           photos={meeting.photos}
+          meetingLocation={meeting.location.trim()}
           members={members}
           onAdd={onAddPhotos}
           onChange={onPhotoChange}
@@ -867,7 +902,8 @@ export function ReviewPage({
             <section className="card stack">
               <h2>프로젝트 분류</h2>
               <p className="muted">
-                한 회의록에 여러 주제가 있으면 결정마다 프로젝트를 다르게 선택하세요.
+                한 회의록에 여러 주제가 있으면 결정마다 프로젝트를 다르게
+                선택하세요.
               </p>
               <ProjectForm onCreateProject={onCreateProject} />
             </section>
@@ -940,9 +976,14 @@ export function ReviewPage({
                       }
                     >
                       <option value="">미확인</option>
-                      {candidate.owner && !members.some((member) => member.name === candidate.owner) && (
-                        <option value={candidate.owner}>{candidate.owner}</option>
-                      )}
+                      {candidate.owner &&
+                        !members.some(
+                          (member) => member.name === candidate.owner,
+                        ) && (
+                          <option value={candidate.owner}>
+                            {candidate.owner}
+                          </option>
+                        )}
                       {members.map((member) => (
                         <option key={member.id}>{member.name}</option>
                       ))}
@@ -998,7 +1039,10 @@ export function ReviewPage({
                 <div className="row-between">
                   <div className="row-actions">
                     <span className="number-label">
-                      {String(decisionCards.length + index + 1).padStart(2, "0")}
+                      {String(decisionCards.length + index + 1).padStart(
+                        2,
+                        "0",
+                      )}
                     </span>
                     <span className="badge badge-amber">후속 업무</span>
                   </div>
@@ -1008,7 +1052,9 @@ export function ReviewPage({
                   />
                 </div>
                 <div className="field">
-                  <label htmlFor={`task-title-${candidate.id}`}>업무 내용</label>
+                  <label htmlFor={`task-title-${candidate.id}`}>
+                    업무 내용
+                  </label>
                   <input
                     id={`task-title-${candidate.id}`}
                     value={candidate.title}
@@ -1030,9 +1076,14 @@ export function ReviewPage({
                       }
                     >
                       <option value="">미확인</option>
-                      {candidate.owner && !members.some((member) => member.name === candidate.owner) && (
-                        <option value={candidate.owner}>{candidate.owner}</option>
-                      )}
+                      {candidate.owner &&
+                        !members.some(
+                          (member) => member.name === candidate.owner,
+                        ) && (
+                          <option value={candidate.owner}>
+                            {candidate.owner}
+                          </option>
+                        )}
                       {members.map((member) => (
                         <option key={member.id}>{member.name}</option>
                       ))}
@@ -1075,7 +1126,8 @@ export function ReviewPage({
           </div>
           {!locked && hasUnclassified && (
             <p className="error-message">
-              회의에서 확정한 항목은 프로젝트를 모두 선택해야 제출할 수 있습니다.
+              회의에서 확정한 항목은 프로젝트를 모두 선택해야 제출할 수
+              있습니다.
             </p>
           )}
           <div className="review-footer">
@@ -1105,8 +1157,11 @@ export function ReviewPage({
                 <button
                   className="button button-primary"
                   disabled={
-                    submitting || hasUnclassified ||
-                    meeting.candidates.some((candidate) => !candidate.title.trim())
+                    submitting ||
+                    hasUnclassified ||
+                    meeting.candidates.some(
+                      (candidate) => !candidate.title.trim(),
+                    )
                   }
                   onClick={() => setConfirmOpen(true)}
                 >

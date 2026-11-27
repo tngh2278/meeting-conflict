@@ -1,3 +1,5 @@
+import { toMeetingPhoto } from "./meeting-photos";
+
 // 회의록 및 결정에 필요한 Supabase 데이터 접근을 담당한다.
 import { supabase } from "./supabaseClient";
 import type {
@@ -76,10 +78,17 @@ export async function fetchTeamProjects(teamId: string): Promise<Project[]> {
     .eq("team_id", teamId)
     .order("name");
   if (error) throw error;
-  return (data ?? []).map((row) => ({ id: row.project_id, teamId, name: row.name }));
+  return (data ?? []).map((row) => ({
+    id: row.project_id,
+    teamId,
+    name: row.name,
+  }));
 }
 
-export async function createTeamProject(teamId: string, name: string): Promise<Project> {
+export async function createTeamProject(
+  teamId: string,
+  name: string,
+): Promise<Project> {
   const { data, error } = await supabase
     .from("meeting_projects")
     .insert({ team_id: teamId, name })
@@ -95,58 +104,112 @@ export async function fetchTeamMeetings(teamId: string): Promise<Meeting[]> {
     target_team: teamId,
   });
   if (error) throw error;
-  const meetings = ((data ?? []) as MeetingRpcRow[]).map((row) => toMeeting(row, teamId));
+
+  const meetings = ((data ?? []) as MeetingRpcRow[]).map((row) =>
+    toMeeting(row, teamId),
+  );
   if (!meetings.length) return [];
 
   const ids = meetings.map((meeting) => meeting.id);
-  const [pages, paragraphs, candidates] = await Promise.all([
-    fetchAllMeetingRows((start, end) => supabase
-      .from("meeting_pages")
-      .select("meeting_id, page_id, page_number, page_text")
-      .in("meeting_id", ids)
-      .order("page_number", { nullsFirst: true })
-      .order("page_id")
-      .range(start, end)),
-    fetchAllMeetingRows((start, end) => supabase
-      .from("meeting_paragraphs")
-      .select("page_id, paragraph_number, paragraph_text, start_offset, end_offset")
-      .in("meeting_id", ids)
-      .order("paragraph_number")
-      .order("paragraph_id")
-      .range(start, end)),
-    fetchAllMeetingRows((start, end) => supabase
-      .from("conflict_candidates")
-      .select("meeting_id, candidate_id, project_id, kind, decision_text, assignee_name, due_date, source_page_number, source_paragraph_number, source_text, status, resolution, resolution_reason")
-      .eq("team_id", teamId)
-      .in("meeting_id", ids)
-      .order("created_at")
-      .order("candidate_id")
-      .range(start, end)),
-  ]);
+  const [pages, paragraphs, candidates, photoRows, basicInfoRows] =
+    await Promise.all([
+      fetchAllMeetingRows((start, end) =>
+        supabase
+          .from("meeting_pages")
+          .select("meeting_id, page_id, page_number, page_text")
+          .in("meeting_id", ids)
+          .order("page_number", { nullsFirst: true })
+          .order("page_id")
+          .range(start, end),
+      ),
+      fetchAllMeetingRows((start, end) =>
+        supabase
+          .from("meeting_paragraphs")
+          .select(
+            "page_id, paragraph_number, paragraph_text, start_offset, end_offset",
+          )
+          .in("meeting_id", ids)
+          .order("paragraph_number")
+          .order("paragraph_id")
+          .range(start, end),
+      ),
+      fetchAllMeetingRows((start, end) =>
+        supabase
+          .from("conflict_candidates")
+          .select(
+            "meeting_id, candidate_id, project_id, kind, decision_text, assignee_name, due_date, source_page_number, source_paragraph_number, source_text, status, resolution, resolution_reason",
+          )
+          .eq("team_id", teamId)
+          .in("meeting_id", ids)
+          .order("created_at")
+          .order("candidate_id")
+          .range(start, end),
+      ),
+      fetchAllMeetingRows((start, end) =>
+        supabase
+          .from("meeting_photos")
+          .select(
+            "meeting_id, photo_id, file_name, storage_path, consent, reviewed, taken_at, taken_at_local, timezone, latitude, longitude, address, address_status",
+          )
+          .eq("team_id", teamId)
+          .in("meeting_id", ids)
+          .order("created_at")
+          .order("photo_id")
+          .range(start, end),
+      ),
+      fetchAllMeetingRows((start, end) =>
+        supabase
+          .from("meetings")
+          .select("meeting_id, meeting_time, attendees")
+          .eq("team_id", teamId)
+          .in("meeting_id", ids)
+          .order("meeting_id")
+          .range(start, end),
+      ),
+    ]);
 
   const byPage = groupMeetingRows(paragraphs, (paragraph) => paragraph.page_id);
   const pagesByMeeting = groupMeetingRows(pages, (page) => page.meeting_id);
-  const candidatesByMeeting = groupMeetingRows(candidates, (candidate) => candidate.meeting_id);
+  const candidatesByMeeting = groupMeetingRows(
+    candidates,
+    (candidate) => candidate.meeting_id,
+  );
+  const photosByMeeting = groupMeetingRows(photoRows, (row) => row.meeting_id);
+
+  const basicInfoById = new Map(
+    basicInfoRows.map((row) => [row.meeting_id, row]),
+  );
+
   return meetings.map((meeting) => {
-    const documentPages: ExtractedDocument["pages"] = (pagesByMeeting.get(meeting.id) ?? [])
-      .map((page) => ({
-        pageNumber: page.page_number,
-        text: page.page_text,
-        paragraphs: (byPage.get(page.page_id) ?? []).map((paragraph) => ({
-          paragraphNumber: paragraph.paragraph_number,
-          text: paragraph.paragraph_text,
-          startOffset: paragraph.start_offset,
-          endOffset: paragraph.end_offset,
-        })),
-      }));
+    const basicInfo = basicInfoById.get(meeting.id);
+    const documentPages: ExtractedDocument["pages"] = (
+      pagesByMeeting.get(meeting.id) ?? []
+    ).map((page) => ({
+      pageNumber: page.page_number,
+      text: page.page_text,
+      paragraphs: (byPage.get(page.page_id) ?? []).map((paragraph) => ({
+        paragraphNumber: paragraph.paragraph_number,
+        text: paragraph.paragraph_text,
+        startOffset: paragraph.start_offset,
+        endOffset: paragraph.end_offset,
+      })),
+    }));
+
     return {
       ...meeting,
-      paragraphs: documentPages.flatMap((page) => page.paragraphs.map((paragraph) => paragraph.text)),
-      extractedDocument: documentPages.length ? {
-        fileName: meeting.fileName || meeting.title,
-        format: meeting.format,
-        pages: documentPages,
-      } : undefined,
+      time: basicInfo?.meeting_time?.slice(0, 5),
+      attendees: basicInfo?.attendees ?? [],
+      photos: (photosByMeeting.get(meeting.id) ?? []).map(toMeetingPhoto),
+      paragraphs: documentPages.flatMap((page) =>
+        page.paragraphs.map((paragraph) => paragraph.text),
+      ),
+      extractedDocument: documentPages.length
+        ? {
+            fileName: meeting.fileName || meeting.title,
+            format: meeting.format,
+            pages: documentPages,
+          }
+        : undefined,
       candidates: (candidatesByMeeting.get(meeting.id) ?? []).map((row) =>
         candidateRowToCandidate(row as CandidateRow, meeting.id),
       ),
@@ -166,7 +229,10 @@ function groupMeetingRows<Row, Key>(rows: Row[], keyOf: (row: Row) => Key) {
 }
 
 async function fetchAllMeetingRows<Row>(
-  fetchPage: (start: number, end: number) => PromiseLike<{ data: Row[] | null; error: unknown }>,
+  fetchPage: (
+    start: number,
+    end: number,
+  ) => PromiseLike<{ data: Row[] | null; error: unknown }>,
 ): Promise<Row[]> {
   const pageSize = 500;
   const rows: Row[] = [];
@@ -179,7 +245,10 @@ async function fetchAllMeetingRows<Row>(
 }
 
 // 원본 파일의 서명 URL은 상세나 출처를 열 때 가져온다.
-export async function fetchMeetingFileUrl(teamId: string, meetingId: string): Promise<string | null> {
+export async function fetchMeetingFileUrl(
+  teamId: string,
+  meetingId: string,
+): Promise<string | null> {
   const { data, error } = await supabase
     .from("meetings")
     .select("file_url")
@@ -202,11 +271,21 @@ interface CandidateRow {
   source_paragraph_number: number | null;
   source_text: string | null;
   status: "pending" | "confirmed" | "resolved";
-  resolution: "keep" | "replace" | "exception" | "hold" | "confirm" | "discard" | null;
+  resolution:
+    | "keep"
+    | "replace"
+    | "exception"
+    | "hold"
+    | "confirm"
+    | "discard"
+    | null;
   resolution_reason: string | null;
 }
 
-function candidateRowToCandidate(row: CandidateRow, meetingId: string): Candidate {
+function candidateRowToCandidate(
+  row: CandidateRow,
+  meetingId: string,
+): Candidate {
   return {
     id: row.candidate_id,
     projectId: row.project_id ?? undefined,
@@ -239,26 +318,28 @@ export async function createMeeting(input: {
   uploadedBy: string; // = auth.users.id (auth.uid())
   title: string;
   meetingDate: string | null; // "YYYY-MM-DD" 또는 null
+  meetingTime?: string;
+  attendees?: string[];
   location?: string;
   tags?: string; // "#a #b" 문자열 그대로
   fileName?: string;
   fileFormat?: "PDF" | "TXT";
   status: Meeting["status"];
 }): Promise<void> {
-  const { error } = await supabase
-    .from("meetings")
-    .insert({
-      meeting_id: input.meetingId,
-      team_id: input.teamId,
-      uploaded_by: input.uploadedBy,
-      title: input.title,
-      meeting_date: input.meetingDate || null,
-      location: input.location?.trim() || null,
-      tags: input.tags ?? "",
-      file_name: input.fileName ?? null,
-      file_format: input.fileFormat ?? null,
-      status: input.status,
-    });
+  const { error } = await supabase.from("meetings").insert({
+    meeting_id: input.meetingId,
+    team_id: input.teamId,
+    uploaded_by: input.uploadedBy,
+    title: input.title,
+    meeting_date: input.meetingDate || null,
+    meeting_time: input.meetingTime || null,
+    attendees: input.attendees ?? [],
+    location: input.location?.trim() || null,
+    tags: input.tags ?? "",
+    file_name: input.fileName ?? null,
+    file_format: input.fileFormat ?? null,
+    status: input.status,
+  });
   if (error) throw error;
 }
 
@@ -415,7 +496,8 @@ async function insertCandidateRows(
       kind: candidate.kind,
       decision_text: candidate.title,
       assignee_name: candidate.owner || null,
-      assignee_user_id: members.find((member) => member.name === candidate.owner)?.id ?? null,
+      assignee_user_id:
+        members.find((member) => member.name === candidate.owner)?.id ?? null,
       due_date: candidate.dueDate || null,
       source_page_number: candidate.evidence.page,
       source_paragraph_number: candidate.evidence.paragraph,
@@ -423,7 +505,9 @@ async function insertCandidateRows(
       status: candidate.confirmed ? "confirmed" : "pending",
     }));
   if (!rows.length) return;
-  const { error: insertError } = await supabase.from("conflict_candidates").insert(rows);
+  const { error: insertError } = await supabase
+    .from("conflict_candidates")
+    .insert(rows);
   if (insertError) throw insertError;
 }
 
@@ -448,7 +532,12 @@ export async function persistMeetingAnalysis(input: {
   if (!existingPages?.length) {
     await persistMeetingContent(input.meetingId, input.doc);
   }
-  await insertCandidateRows(input.meetingId, input.teamId, input.candidates, input.members);
+  await insertCandidateRows(
+    input.meetingId,
+    input.teamId,
+    input.candidates,
+    input.members,
+  );
 }
 
 export async function saveMeetingToSupabase(
@@ -463,6 +552,8 @@ export async function saveMeetingToSupabase(
     uploadedBy: userId,
     title: meeting.title,
     meetingDate: meeting.date || null,
+    meetingTime: meeting.time,
+    attendees: meeting.attendees,
     location: meeting.location,
     tags: meeting.tags,
     fileName: meeting.fileName,
@@ -585,7 +676,8 @@ export async function updateConflictCandidate(
       project_id: candidate.projectId || null,
       decision_text: candidate.title,
       assignee_name: candidate.owner || null,
-      assignee_user_id: members.find((member) => member.name === candidate.owner)?.id ?? null,
+      assignee_user_id:
+        members.find((member) => member.name === candidate.owner)?.id ?? null,
       due_date: candidate.dueDate || null,
       status: candidate.confirmed ? "confirmed" : "pending",
     })
@@ -613,7 +705,10 @@ export async function resolveCandidate(input: {
   if (error) throw error;
 }
 
-export async function invalidateDecision(decisionId: string, reason: string): Promise<void> {
+export async function invalidateDecision(
+  decisionId: string,
+  reason: string,
+): Promise<void> {
   const { error } = await supabase.rpc("invalidate_meeting_decision", {
     p_decision_id: decisionId,
     p_reason: reason,
@@ -656,7 +751,9 @@ interface HistoryRow {
   created_at: string;
 }
 
-export async function fetchTeamHistory(teamId: string): Promise<ChangeRecord[]> {
+export async function fetchTeamHistory(
+  teamId: string,
+): Promise<ChangeRecord[]> {
   const { data, error } = await supabase
     .from("decision_history")
     .select(
@@ -669,8 +766,10 @@ export async function fetchTeamHistory(teamId: string): Promise<ChangeRecord[]> 
   return (data as HistoryRow[]).map((row) => ({
     id: row.history_id,
     teamId,
-    title: (row.method === "invalidate" ? row.before_text : row.after_text)
-      ?? row.before_text ?? "결정 처리",
+    title:
+      (row.method === "invalidate" ? row.before_text : row.after_text) ??
+      row.before_text ??
+      "결정 처리",
     before: row.before_text ?? "",
     after: row.after_text ?? "",
     method: row.method,

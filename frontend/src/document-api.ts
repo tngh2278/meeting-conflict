@@ -48,14 +48,34 @@ export async function analyzeDocument(
   return response.json();
 }
 
+export type MeetingBasicInfo = {
+  date: string | null;
+  time: string | null;
+  location: string | null;
+  attendees: string[];
+};
+
+export async function extractMeetingInfo(
+  file: File,
+  signal: AbortSignal,
+): Promise<MeetingBasicInfo> {
+  const response = await uploadDocument(file, signal, "meeting-info");
+  return response.json();
+}
+
 async function uploadDocument(
   file: File,
   signal: AbortSignal,
-  action: "extract" | "analyze",
+  action: "extract" | "analyze" | "meeting-info",
 ): Promise<Response> {
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/+$/, "");
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim().replace(
+    /\/+$/,
+    "",
+  );
   if (!apiBaseUrl) {
-    throw new Error("백엔드 API 주소가 설정되지 않았습니다. VITE_API_BASE_URL을 확인해 주세요.");
+    throw new Error(
+      "백엔드 API 주소가 설정되지 않았습니다. VITE_API_BASE_URL을 확인해 주세요.",
+    );
   }
 
   // 웹 로그인 세션에서 현재 토큰을 가져온다.
@@ -77,9 +97,13 @@ async function uploadDocument(
   } catch (error) {
     if (signal.aborted) throw error;
     if (error instanceof DOMException && error.name === "TimeoutError") {
-      throw new Error("분석 응답 시간이 초과됐습니다. 잠시 후 다시 시도해 주세요.");
+      throw new Error(
+        "분석 응답 시간이 초과됐습니다. 잠시 후 다시 시도해 주세요.",
+      );
     }
-    throw new Error("서버에 연결하지 못했습니다. 서버 상태와 API 주소를 확인한 뒤 다시 시도해 주세요.");
+    throw new Error(
+      "서버에 연결하지 못했습니다. 서버 상태와 API 주소를 확인한 뒤 다시 시도해 주세요.",
+    );
   }
 
   if (response.status === 401) {
