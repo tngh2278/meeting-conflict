@@ -1231,12 +1231,12 @@ export function ProfilePage({ user }: { user: Member }) {
     if (!consent || busy) return;
 
     if (
-      !/\.jpe?g$/i.test(file.name) ||
-      file.type !== "image/jpeg" ||
+      !/\.(jpe?g|png)$/i.test(file.name) ||
+      !["image/jpeg", "image/png"].includes(file.type) ||
       !file.size ||
       file.size > 10 * 1024 * 1024
     ) {
-      setError("10 MB 이하의 JPEG 사진을 선택해 주세요.");
+      setError("10 MB 이하의 JPEG 또는 PNG 사진을 선택해 주세요.");
       return;
     }
 
@@ -1323,11 +1323,11 @@ export function ProfilePage({ user }: { user: Member }) {
           >
             {saving ? "처리 중…" : url ? "기준 사진 교체" : "기준 사진 등록"}
             <input
-              aria-label="기준 얼굴 JPEG 사진 선택"
+              aria-label="기준 얼굴 JPEG 또는 PNG 사진 선택"
               type="file"
               hidden
               disabled={!consent || busy}
-              accept=".jpg,.jpeg,image/jpeg"
+              accept=".jpg,.jpeg,.png,image/jpeg,image/png"
               onChange={(event) => {
                 const file = event.currentTarget.files?.[0];
                 event.currentTarget.value = "";

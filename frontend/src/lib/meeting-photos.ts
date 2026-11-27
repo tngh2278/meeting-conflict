@@ -166,10 +166,17 @@ export type PhotoAddressResult = {
   address: string | null;
 };
 
-async function fetchPhotoLocation(
+export type PhotoFaceResult = {
+  registeredReferenceCount: number;
+  referenceUserIds: string[];
+  faces: { userId: string | null }[];
+};
+
+async function fetchPhotoResource(
   photoId: string,
-  resource: "address" | "map",
+  resource: "address" | "map" | "face-matches",
   signal: AbortSignal,
+  init?: RequestInit,
 ): Promise<Response> {
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim().replace(
     /\/+$/,
@@ -180,10 +187,14 @@ async function fetchPhotoLocation(
   const { data, error } = await supabase.auth.getSession();
   if (error || !data.session) throw new Error("로그인이 만료됐습니다.");
 
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${data.session.access_token}`);
+
   return fetch(
     `${apiBaseUrl}/api/photos/${encodeURIComponent(photoId)}/${resource}`,
     {
-      headers: { Authorization: `Bearer ${data.session.access_token}` },
+      ...init,
+      headers,
       cache: "no-store",
       signal: AbortSignal.any([signal, AbortSignal.timeout(65_000)]),
     },
@@ -194,7 +205,7 @@ export async function getMeetingPhotoAddress(
   photoId: string,
   signal: AbortSignal,
 ): Promise<PhotoAddressResult> {
-  const response = await fetchPhotoLocation(photoId, "address", signal);
+  const response = await fetchPhotoResource(photoId, "address", signal);
   if (!response.ok) throw new Error("주소 조회에 실패했습니다.");
   return response.json();
 }
@@ -203,9 +214,30 @@ export async function getMeetingPhotoMap(
   photoId: string,
   signal: AbortSignal,
 ): Promise<Blob> {
-  const response = await fetchPhotoLocation(photoId, "map", signal);
+  const response = await fetchPhotoResource(photoId, "map", signal);
   if (!response.ok) throw new Error("지도를 불러오지 못했습니다.");
   return response.blob();
+}
+
+export async function compareMeetingPhotoFaces(
+  photoId: string,
+  signal: AbortSignal,
+): Promise<PhotoFaceResult> {
+  const response = await fetchPhotoResource(photoId, "face-matches", signal, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmed: true }),
+  });
+  if (response.status === 503) {
+    throw new Error("백엔드의 얼굴 모델 파일과 Supabase 키 설정을 확인해 주세요.");
+  }
+  if (response.status === 404) {
+    throw new Error("대조할 회의 사진을 찾을 수 없습니다.");
+  }
+  if (!response.ok) {
+    throw new Error("얼굴 대조에 실패했습니다. 백엔드 로그를 확인해 주세요.");
+  }
+  return response.json();
 }
 
 export async function getMeetingPhotoUrl(path: string) {

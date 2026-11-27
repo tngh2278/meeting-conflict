@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import MeetingPhotoFaceReview from "./MeetingPhotoFaceReview";
 import Modal from "./components/Modal";
 import { examplePhoto } from "./demo-data";
 import type { MeetingPhoto, Member } from "./demo-data";
@@ -478,68 +479,76 @@ export default function MeetingPhotos({
                 일치 후보를 직접 확인해 주세요
               </span>
             </div>
-            {selected.faces.length ? (
-              selected.faces.map((face, index) => (
-                <div className="face-row" key={face.id}>
-                  <span className="avatar">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                  <div className="face-description">
-                    <strong>사진 속 얼굴 {index + 1}</strong>
-                    <p className="small muted">
-                      {face.name === "확인 불가"
-                        ? "확인 불가 · 기준 정보 미등록 또는 동의 철회"
-                        : face.name === "미등록 얼굴"
-                          ? "등록 정보와 일치하지 않는 얼굴"
-                          : face.confirmed
-                            ? "사용자가 확인한 인물"
-                            : "일치 후보 · 확인 필요"}
-                    </p>
-                  </div>
-                  <select
-                    aria-label={`얼굴 ${index + 1} 인물 수정`}
-                    value={face.name}
-                    onChange={(event) =>
-                      onChange({
-                        ...selected,
-                        reviewed: false,
-                        faces: selected.faces.map((item) =>
-                          item.id === face.id
-                            ? {
-                                ...item,
-                                name: event.target.value,
-                                confirmed: true,
-                              }
-                            : item,
-                        ),
-                      })
-                    }
-                  >
-                    <option>미등록 얼굴</option>
-                    <option>확인 불가</option>
-                    {members.map((member) => (
-                      <option key={member.id}>{member.name}</option>
-                    ))}
-                  </select>
+            {selected.example ? (
+              <>
+                {selected.faces.length ? (
+                  selected.faces.map((face, index) => (
+                    <div className="face-row" key={face.id}>
+                      <span className="avatar">
+                        {String(index + 1).padStart(2, "0")}
+                      </span>
+                      <div className="face-description">
+                        <strong>사진 속 얼굴 {index + 1}</strong>
+                        <p className="small muted">
+                          {face.name === "확인 불가"
+                            ? "확인 불가 · 기준 정보 미등록 또는 동의 철회"
+                            : face.name === "미등록 얼굴"
+                              ? "등록 정보와 일치하지 않는 얼굴"
+                              : face.confirmed
+                                ? "사용자가 확인한 인물"
+                                : "일치 후보 · 확인 필요"}
+                        </p>
+                      </div>
+                      <select
+                        aria-label={`얼굴 ${index + 1} 인물 수정`}
+                        value={face.name}
+                        onChange={(event) =>
+                          onChange({
+                            ...selected,
+                            reviewed: false,
+                            faces: selected.faces.map((item) =>
+                              item.id === face.id
+                                ? {
+                                    ...item,
+                                    name: event.target.value,
+                                    confirmed: true,
+                                  }
+                                : item,
+                            ),
+                          })
+                        }
+                      >
+                        <option>미등록 얼굴</option>
+                        <option>확인 불가</option>
+                        {members.map((member) => (
+                          <option key={member.id}>{member.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))
+                ) : (
+                  <p className="muted">
+                    이 예시 사진에는 대조 결과가 없습니다.
+                  </p>
+                )}
+                <div className="subtle-panel">
+                  <strong>사진에서 미확인된 팀원</strong>
+                  <p>
+                    {missing.map((member) => member.name).join(", ") ||
+                      "모든 팀원이 사진에서 확인되었습니다."}
+                  </p>
+                  <p className="small muted">
+                    사진에서 확인되지 않아도 불참으로 판단하지 않습니다.
+                  </p>
                 </div>
-              ))
+              </>
             ) : (
-              <p className="muted">
-                실제 얼굴 대조 결과는 서버 연동 후 표시됩니다.
-              </p>
+              <MeetingPhotoFaceReview
+                key={selected.id}
+                photoId={selected.id}
+                members={members}
+              />
             )}
-            <div className="subtle-panel">
-              <strong>사진에서 미확인된 팀원</strong>
-              <p>
-                {selected.example
-                  ? missing.map((member) => member.name).join(", ") ||
-                    "모든 팀원이 사진에서 확인되었습니다."
-                  : "분석 전에는 팀원 확인 여부를 판단하지 않습니다."}
-              </p>
-              <p className="small muted">
-                사진에서 확인되지 않아도 불참으로 판단하지 않습니다.
-              </p>
-            </div>
             <div className="row-between">
               <p className="small muted">
                 검수 결과는 현재 화면에서만 보관됩니다.

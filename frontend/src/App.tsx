@@ -1586,7 +1586,7 @@ export default function App() {
           로그인 정보를 불러오는 중...
         </div>
         <div className="small muted">
-          Supabase 세션을 확인하고 있어요. 잠시만 기다려주세요.
+          로그인 세션을 확인중입니다. 잠시만 기다려주세요.
         </div>
       </div>
     );
