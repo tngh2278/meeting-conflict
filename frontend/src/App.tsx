@@ -89,7 +89,6 @@ import {
   TasksPage,
   TeamPage,
 } from "./WorkspacePages";
-import type { FaceProfile } from "./WorkspacePages";
 
 const menuItems: { page: Page; label: string }[] = [
   { page: "overview", label: "개요" },
@@ -222,7 +221,6 @@ export default function App() {
   const [history, setHistory] = useState<ChangeRecord[]>([]);
   // 업무는 Supabase tasks 테이블을 직접 조회한다 (SFR-016).
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [profiles, setProfiles] = useState<Record<string, FaceProfile>>({});
   const [route, setRoute] = useState(readRoute);
   const [dialog, setDialog] = useState<DialogName>(null);
   const [source, setSource] = useState<Evidence | null>(null);
@@ -2188,39 +2186,7 @@ export default function App() {
               />
             )}
             {route.page === "profile" && (
-              <ProfilePage
-                user={user}
-                profile={profiles[user.id] || { consent: false, url: "" }}
-                createUrl={createUrl}
-                onChange={(profile) => {
-                  if (profiles[user.id]?.url !== profile.url)
-                    releaseUrl(profiles[user.id]?.url);
-                  setProfiles((items) => ({ ...items, [user.id]: profile }));
-                }}
-                onWithdraw={() => {
-                  releaseUrl(profiles[user.id]?.url);
-                  setProfiles((items) => ({
-                    ...items,
-                    [user.id]: { consent: false, url: "" },
-                  }));
-                  setMeetings((items) =>
-                    items.map((meeting) => ({
-                      ...meeting,
-                      photos: meeting.photos.map((photo) => ({
-                        ...photo,
-                        faces: photo.faces.map((face) =>
-                          face.name === user.name
-                            ? { ...face, name: "확인 불가", confirmed: false }
-                            : face,
-                        ),
-                      })),
-                    })),
-                  );
-                  setToast(
-                    "얼굴 정보 처리 동의를 철회하고 연결 정보를 시연 데이터에서 제거했습니다.",
-                  );
-                }}
-              />
+              <ProfilePage key={user.id} user={user} />
             )}
             <footer className="workspace-footer">
               팀·회의록·결정·업무·알림은 Supabase에 저장됩니다 · 회의 사진은

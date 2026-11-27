@@ -17,6 +17,11 @@ import type {
 import { EmptyState, Heading, SourceButton } from "./MeetingPages";
 import Modal from "./components/Modal";
 import { searchUserByEmail, type UserSearchResult } from "./lib/teams";
+import {
+  loadFaceReference,
+  saveFaceReference,
+  deleteFaceReference,
+} from "./lib/face-profiles";
 
 export function DecisionsPage({
   meetings,
@@ -41,10 +46,12 @@ export function DecisionsPage({
   onTaskResolve: (meeting: Meeting, candidate: Candidate) => void;
   onInvalidate: (decision: Decision, reason: string) => Promise<string | null>;
 }) {
-  const [tab, setTab] = useState<"pending" | "tasks" | "current" | "held" | "history">(
-    role === "admin" ? "pending" : "current",
+  const [tab, setTab] = useState<
+    "pending" | "tasks" | "current" | "held" | "history"
+  >(role === "admin" ? "pending" : "current");
+  const [invalidationTarget, setInvalidationTarget] = useState<Decision | null>(
+    null,
   );
-  const [invalidationTarget, setInvalidationTarget] = useState<Decision | null>(null);
   const projectName = (id: string | undefined) =>
     projects.find((project) => project.id === id)?.name ?? "미분류";
   const pending = meetings.flatMap((meeting) =>
@@ -78,7 +85,9 @@ export function DecisionsPage({
       .map((candidate) => ({ meeting, candidate })),
   );
   const changes = history.filter((record) => record.method !== "invalidate");
-  const invalidations = history.filter((record) => record.method === "invalidate");
+  const invalidations = history.filter(
+    (record) => record.method === "invalidate",
+  );
 
   function renderHistoryRecord(record: ChangeRecord) {
     return (
@@ -101,10 +110,16 @@ export function DecisionsPage({
           </p>
         </div>
         <p className="muted">사유: {record.reason}</p>
-        {meetings.some((meeting) => meeting.id === record.evidence.documentId) ? (
+        {meetings.some(
+          (meeting) => meeting.id === record.evidence.documentId,
+        ) ? (
           <SourceButton source={record.evidence} onSource={onSource} />
-        ) : record.evidence.quote && (
-          <blockquote className="small muted">원문 발췌 · {record.evidence.quote}</blockquote>
+        ) : (
+          record.evidence.quote && (
+            <blockquote className="small muted">
+              원문 발췌 · {record.evidence.quote}
+            </blockquote>
+          )
         )}
       </article>
     );
@@ -176,9 +191,12 @@ export function DecisionsPage({
                   </span>
                 </div>
                 <h2>{candidate.title}</h2>
-                <p className="small muted">프로젝트: {projectName(candidate.projectId)}</p>
+                <p className="small muted">
+                  프로젝트: {projectName(candidate.projectId)}
+                </p>
                 <p className="muted">
-                  {candidate.owner || "담당자 미확인"} · {candidate.dueDate || "기한 미확인"}
+                  {candidate.owner || "담당자 미확인"} ·{" "}
+                  {candidate.dueDate || "기한 미확인"}
                 </p>
                 <div className="row-actions">
                   <button
@@ -243,7 +261,10 @@ export function DecisionsPage({
                       확정·제외 처리하기
                     </button>
                   )}
-                  <SourceButton source={candidate.evidence} onSource={onSource} />
+                  <SourceButton
+                    source={candidate.evidence}
+                    onSource={onSource}
+                  />
                 </div>
               </section>
             ))}
@@ -281,7 +302,9 @@ export function DecisionsPage({
                   {decision.exception ? "예외 적용" : "유효"}
                 </span>
                 <h3>{decision.title}</h3>
-                <p className="small muted">프로젝트: {projectName(decision.projectId)}</p>
+                <p className="small muted">
+                  프로젝트: {projectName(decision.projectId)}
+                </p>
                 <p className="small muted">
                   {decision.owner || "담당자 미확인"} ·{" "}
                   {decision.dueDate || "기한 미확인"}
@@ -377,7 +400,12 @@ function InvalidationDialog({
   const [error, setError] = useState<string | null>(null);
 
   return (
-    <Modal title="결정 무효 처리" onClose={() => { if (!saving) onClose(); }}>
+    <Modal
+      title="결정 무효 처리"
+      onClose={() => {
+        if (!saving) onClose();
+      }}
+    >
       <form
         className="stack"
         aria-busy={saving}
@@ -392,8 +420,13 @@ function InvalidationDialog({
           else onClose();
         }}
       >
-        <p><strong>{decision.title}</strong></p>
-        <p className="muted">유효 목록과 AI 비교 대상에서 제외하고, 처리 사유는 변경 이력에 기록합니다.</p>
+        <p>
+          <strong>{decision.title}</strong>
+        </p>
+        <p className="muted">
+          유효 목록과 AI 비교 대상에서 제외하고, 처리 사유는 변경 이력에
+          기록합니다.
+        </p>
         <label className="field">
           무효 처리 사유
           <textarea
@@ -404,12 +437,25 @@ function InvalidationDialog({
             required
           />
         </label>
-        {error && <p className="error-text" role="alert">{error}</p>}
+        {error && (
+          <p className="error-text" role="alert">
+            {error}
+          </p>
+        )}
         <div className="row-actions">
-          <button type="button" className="button button-secondary" onClick={onClose} disabled={saving}>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={onClose}
+            disabled={saving}
+          >
             취소
           </button>
-          <button type="submit" className="button button-danger" disabled={saving || !reason.trim()}>
+          <button
+            type="submit"
+            className="button button-danger"
+            disabled={saving || !reason.trim()}
+          >
             {saving ? "처리 중…" : "무효 처리"}
           </button>
         </div>
@@ -1150,33 +1196,87 @@ export function TeamPage({
   );
 }
 
-export type FaceProfile = { consent: boolean; url: string };
-export function ProfilePage({
-  user,
-  profile,
-  onChange,
-  createUrl,
-  onWithdraw,
-}: {
-  user: Member;
-  profile: FaceProfile;
-  onChange: (profile: FaceProfile) => void;
-  createUrl: (file: File) => string;
-  onWithdraw: () => void;
-}) {
-  const [error, setError] = useState("");
+export function ProfilePage({ user }: { user: Member }) {
+  const [consent, setConsent] = useState(false);
+  const [url, setUrl] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState("");
+  const busy = loading || saving;
+
+  useEffect(() => {
+    let current = true;
+
+    void loadFaceReference(user.id).then(
+      (photoUrl) => {
+        if (!current) return;
+        setUrl(photoUrl);
+        setConsent(Boolean(photoUrl));
+        setLoading(false);
+      },
+      () => {
+        if (!current) return;
+        setError("기준 얼굴 사진을 불러오지 못했습니다.");
+        setLoading(false);
+      },
+    );
+
+    return () => {
+      current = false;
+    };
+  }, [user.id]);
+
+  async function upload(file: File) {
+    if (!consent || busy) return;
+
+    if (
+      !/\.jpe?g$/i.test(file.name) ||
+      file.type !== "image/jpeg" ||
+      !file.size ||
+      file.size > 10 * 1024 * 1024
+    ) {
+      setError("10 MB 이하의 JPEG 사진을 선택해 주세요.");
+      return;
+    }
+
+    setError("");
+    setSaving(true);
+    try {
+      setUrl(await saveFaceReference(user.id, file));
+    } catch {
+      setError("기준 얼굴 사진을 저장하지 못했습니다.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function withdraw() {
+    setError("");
+    setSaving(true);
+    try {
+      await deleteFaceReference(user.id);
+      setUrl("");
+      setConsent(false);
+      setConfirming(false);
+    } catch {
+      setError("기준 얼굴 사진을 삭제하지 못했습니다.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <>
       <Heading
         title="내 정보·얼굴 정보 관리"
-        description="본인의 기준 얼굴 사진과 처리 동의를 관리합니다."
+        description="기준 얼굴 사진과 처리 동의를 관리합니다."
       />
       <div className="profile-grid">
         <section className="card stack">
           <div className="profile-avatar">
-            {profile.url ? (
-              <img src={profile.url} alt="내 기준 얼굴 사진" />
+            {url ? (
+              <img src={url} alt="내 기준 얼굴 사진" />
             ) : (
               <span>{user.name.slice(-2)}</span>
             )}
@@ -1184,98 +1284,104 @@ export function ProfilePage({
           <h2>{user.name}</h2>
           <p className="muted">{user.email}</p>
           <span className="badge">
-            {profile.url ? "기준 얼굴 사진 선택됨" : "기준 얼굴 사진 미등록"}
+            {loading
+              ? "사진 불러오는 중"
+              : url
+                ? "기준 얼굴 사진 등록됨"
+                : "기준 얼굴 사진 미등록"}
           </span>
         </section>
+
         <section className="card stack">
           <h2>얼굴 정보 처리 동의</h2>
           <p>
-            회의 사진에서 본인의 일치 후보를 찾는 용도로 기준 얼굴 사진을
-            사용합니다.
+            같은 팀의 회의 사진에서 본인의 일치 후보를 찾는 용도로 사용합니다.
+            기준 사진은 동의를 철회할 때까지 보관합니다.
           </p>
-          <div className="subtle-panel">
-            <p>
-              <strong>시연 보유 기간</strong> · 새로고침 또는 동의 철회 전까지
-            </p>
-            <p className="small muted">
-              실제 얼굴 특징 추출이나 서버 저장은 실행되지 않습니다.
-            </p>
-          </div>
           <label className="check-line">
             <input
               type="checkbox"
-              checked={profile.consent}
+              checked={consent}
+              disabled={busy}
               onChange={(event) => {
-                if (!event.target.checked) setConfirming(true);
-                else onChange({ ...profile, consent: true });
+                if (!event.target.checked && url) {
+                  setError("");
+                  setConfirming(true);
+                } else {
+                  setConsent(event.target.checked);
+                }
               }}
             />
             처리 목적과 보유 기간을 확인하고 동의합니다.
           </label>
+
           <label
-            className={`button button-secondary file-label ${!profile.consent ? "is-disabled" : ""}`}
+            className={
+              "button button-secondary file-label " +
+              (!consent || busy ? "is-disabled" : "")
+            }
           >
-            {profile.url ? "기준 사진 교체" : "기준 사진 등록"}
+            {saving ? "처리 중…" : url ? "기준 사진 교체" : "기준 사진 등록"}
             <input
               aria-label="기준 얼굴 JPEG 사진 선택"
               type="file"
               hidden
-              disabled={!profile.consent}
+              disabled={!consent || busy}
               accept=".jpg,.jpeg,image/jpeg"
               onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = "";
-                if (!file) return;
-                if (
-                  !/\.jpe?g$/i.test(file.name) ||
-                  file.type !== "image/jpeg" ||
-                  !file.size ||
-                  file.size > 10 * 1024 * 1024
-                ) {
-                  setError("10 MB 이하의 JPEG 사진을 선택해 주세요.");
-                  return;
-                }
-                setError("");
-                onChange({ ...profile, url: createUrl(file) });
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (file) void upload(file);
               }}
             />
           </label>
-          {error && (
+          {error && !confirming && (
             <p className="error-message" role="alert">
               {error}
             </p>
           )}
-          <button
-            className="text-button danger-text"
-            onClick={() => setConfirming(true)}
-          >
-            동의 철회·얼굴 정보 삭제
-          </button>
+          {url && (
+            <button
+              className="text-button danger-text"
+              disabled={busy}
+              onClick={() => {
+                setError("");
+                setConfirming(true);
+              }}
+            >
+              동의 철회·얼굴 정보 삭제
+            </button>
+          )}
         </section>
       </div>
       {confirming && (
         <Modal
           title="얼굴 정보 처리를 중단할까요?"
-          onClose={() => setConfirming(false)}
+          onClose={() => {
+            if (!saving) setConfirming(false);
+          }}
         >
           <div className="stack">
-            <p>
-              현재 시연의 기준 얼굴 사진과 본인에 연결된 얼굴 대조 정보를
-              제거합니다.
-            </p>
+            <p>등록한 기준 얼굴 사진을 삭제합니다.</p>
+            {error && (
+              <p className="error-message" role="alert">
+                {error}
+              </p>
+            )}
             <div className="row-actions">
               <button
+                type="button"
                 className="button button-secondary"
+                disabled={saving}
                 onClick={() => setConfirming(false)}
               >
                 취소
               </button>
               <button
+                type="button"
                 className="button button-danger"
-                onClick={() => {
-                  onWithdraw();
-                  setConfirming(false);
-                }}
+                disabled={saving}
+                onClick={() => void withdraw()}
               >
                 동의 철회·삭제
               </button>
